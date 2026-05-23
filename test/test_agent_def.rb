@@ -125,7 +125,7 @@ class TestAgentDef < Test::Unit::TestCase
         write(File.join(project_dir, "agents", "x.md"), "---\nname: x\nengine: echo\n---\nproj\n")
         write(File.join(project_dir, "agents", "z.md"), "---\nname: z\nengine: echo\n---\nproj\n")
         names = AD.list(gem_agents_dir: File.join(gem_dir, "agents"),
-                        project_agents_dir: File.join(project_dir, "agents")).sort
+                        project_agents_dir: File.join(project_dir, "agents"))
         assert_equal(%w[x y z], names)
       end
     end

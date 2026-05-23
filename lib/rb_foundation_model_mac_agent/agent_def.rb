@@ -7,8 +7,8 @@ module RbFoundationModelMacAgent
     DEFAULTS = {
       model: "default",
       fs_root: ".",
-      allowed_mcp: [],
-      allowed_builtin: [],
+      allowed_mcp: [].freeze,
+      allowed_builtin: [].freeze,
       max_iters: 8,
     }.freeze
 
@@ -35,7 +35,7 @@ module RbFoundationModelMacAgent
           names << File.basename(f, ".md")
         end
       end
-      names.uniq
+      names.uniq.sort
     end
 
     def resolve_path(name, gem_dir, project_dir)
