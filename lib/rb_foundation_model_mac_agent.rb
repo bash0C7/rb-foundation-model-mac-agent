@@ -9,7 +9,7 @@ require_relative "rb_foundation_model_mac_agent/ollama_engine"
 require_relative "rb_foundation_model_mac_agent/apple_fm_engine"
 require_relative "rb_foundation_model_mac_agent/mcp_registry"
 require_relative "rb_foundation_model_mac_agent/session"
-# Subsequent task (10) adds require for cli.
+require_relative "rb_foundation_model_mac_agent/cli"
 
 module RbFoundationModelMacAgent
 end
