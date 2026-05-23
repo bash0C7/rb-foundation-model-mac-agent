@@ -19,13 +19,12 @@ module RbFoundationModelMacAgent
       "wrote #{content.bytesize} bytes to #{abs}"
     end
 
-    # path must be absolute and resolve (after symlink expansion) inside fs_root.
-    # Resolves via nearest-existing-parent so containment check fires before
-    # hitting ENOENT for non-existent escape targets like ../../etc/passwd.
+    # path may be relative or absolute and must resolve (after symlink expansion)
+    # inside fs_root. Resolves via nearest-existing-parent so containment check
+    # fires before hitting ENOENT for non-existent escape targets like ../../etc/passwd.
     def ensure_inside(path, fs_root)
-      raise "path must be absolute: #{path}" unless Pathname.new(path).absolute?
       root        = File.realpath(File.expand_path(fs_root))
-      target      = File.expand_path(path)
+      target      = File.expand_path(path, root)
       parent      = nearest_existing_parent(target)
       parent_real = File.realpath(parent)
       relative    = Pathname.new(target).relative_path_from(Pathname.new(parent)).to_s
@@ -45,9 +44,8 @@ module RbFoundationModelMacAgent
     # For write, the file may not exist yet — resolve via the nearest existing
     # parent directory so we still get realpath-based escape detection.
     def ensure_inside_for_write(path, fs_root)
-      raise "path must be absolute: #{path}" unless Pathname.new(path).absolute?
       root   = File.realpath(File.expand_path(fs_root))
-      target = File.expand_path(path)
+      target = File.expand_path(path, root)
       parent = nearest_existing_parent(target)
       parent_real = File.realpath(parent)
       relative   = Pathname.new(target).relative_path_from(Pathname.new(parent)).to_s

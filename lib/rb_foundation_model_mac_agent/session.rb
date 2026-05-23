@@ -99,7 +99,8 @@ module RbFoundationModelMacAgent
 
         Emit at most one tool_call per turn. When you have the final answer,
         respond without any tool_call block.
-        For fs.* tools, paths MUST be absolute.
+        For fs.* tools, paths are resolved relative to your workspace root.
+        Absolute paths are also accepted as long as they fall inside the workspace.
       GUIDE
     end
   end

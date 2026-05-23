@@ -28,10 +28,17 @@ class TestFsTool < Test::Unit::TestCase
     assert_match(/wrote 1 bytes/, result)
   end
 
-  def test_relative_path_rejected
-    assert_raise_message(/path must be absolute/) do
-      RbFoundationModelMacAgent::FsTool.read(path: "a.txt", fs_root: @root)
-    end
+  def test_relative_path_resolves_under_fs_root
+    path_rel = "a.txt"
+    File.write(File.join(@root, "a.txt"), "hello\n")
+    assert_equal("hello\n",
+                 RbFoundationModelMacAgent::FsTool.read(path: path_rel, fs_root: @root))
+  end
+
+  def test_relative_path_with_dotslash_resolves_under_fs_root
+    File.write(File.join(@root, "b.txt"), "world\n")
+    assert_equal("world\n",
+                 RbFoundationModelMacAgent::FsTool.read(path: "./b.txt", fs_root: @root))
   end
 
   def test_path_outside_root_rejected
