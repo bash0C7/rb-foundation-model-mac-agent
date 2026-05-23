@@ -15,7 +15,7 @@ class TestSession < Test::Unit::TestCase
     }.merge(overrides)
   end
 
-  def test_turn_with_echo_engine_appends_user_and_assistant
+  def test_turn_with_scripted_engine_appends_user_and_assistant
     Dir.mktmpdir do |dir|
       reg = RbFoundationModelMacAgent::McpRegistry.new(config_path: File.join(dir, "mcp.json"))
       begin

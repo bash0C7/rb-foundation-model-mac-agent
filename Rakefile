@@ -22,7 +22,7 @@ namespace :acceptance do
     s = AppleFoundationModel::Session.new(instructions: "")
     s.close if s.respond_to?(:close)
     true
-  rescue StandardError => e
+  rescue StandardError, LoadError => e
     warn "[acceptance] Apple FM probe failed: #{e.class}: #{e.message}"
     false
   end
