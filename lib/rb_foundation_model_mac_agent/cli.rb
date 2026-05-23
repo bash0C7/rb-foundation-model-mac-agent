@@ -13,7 +13,7 @@ module RbFoundationModelMacAgent
   module CLI
     DEFAULT_AGENT = "yamabiko"
     PROJECT_DIR_NAME = ".rb-foundation-model-mac-agent"
-    GEM_AGENTS_DIR = File.expand_path("../../../agents", __dir__)
+    GEM_AGENTS_DIR = File.expand_path("../../agents", __dir__)
 
     module_function
 
