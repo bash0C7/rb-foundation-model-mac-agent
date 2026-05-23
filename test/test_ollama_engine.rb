@@ -58,4 +58,10 @@ class TestOllamaEngine < Test::Unit::TestCase
       RbFoundationModelMacAgent::OllamaEngine.new(model: "x", system_prompt: "").close
     end
   end
+
+  def test_reset_is_safe
+    assert_nothing_raised do
+      RbFoundationModelMacAgent::OllamaEngine.new(model: "x", system_prompt: "").reset
+    end
+  end
 end

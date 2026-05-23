@@ -43,6 +43,7 @@ module RbFoundationModelMacAgent
 
     def reset
       @messages.clear
+      @engine.reset
     end
 
     def close

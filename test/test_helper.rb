@@ -8,11 +8,12 @@ require "rb_foundation_model_mac_agent"
 # strings (one per Session#turn iteration). Captures every messages array
 # it was called with so tests can assert ReAct history shaping.
 class ScriptedEngine
-  attr_reader :calls
+  attr_reader :calls, :reset_count
 
   def initialize(replies)
     @replies = replies.dup
     @calls = []
+    @reset_count = 0
   end
 
   def stream(messages, &block)
@@ -20,6 +21,8 @@ class ScriptedEngine
     text = @replies.shift or raise "ScriptedEngine: out of scripted replies"
     block.call(text)
   end
+
+  def reset; @reset_count += 1; end
 
   def close; end
 end

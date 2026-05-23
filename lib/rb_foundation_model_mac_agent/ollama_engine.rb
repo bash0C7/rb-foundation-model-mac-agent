@@ -42,6 +42,8 @@ module RbFoundationModelMacAgent
       end
     end
 
+    def reset; end
+
     def close; end
   end
 end

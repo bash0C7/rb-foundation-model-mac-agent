@@ -14,4 +14,8 @@ class TestEchoEngine < Test::Unit::TestCase
     engine = RbFoundationModelMacAgent::EchoEngine.new
     assert_nothing_raised { engine.close }
   end
+
+  def test_reset_is_safe
+    assert_nothing_raised { RbFoundationModelMacAgent::EchoEngine.new.reset }
+  end
 end

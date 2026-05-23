@@ -8,6 +8,8 @@ module RbFoundationModelMacAgent
       block.call(messages.last.fetch(:content))
     end
 
+    def reset; end
+
     def close; end
   end
 end

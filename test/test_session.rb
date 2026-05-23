@@ -80,6 +80,18 @@ class TestSession < Test::Unit::TestCase
     end
   end
 
+  def test_reset_also_resets_engine
+    Dir.mktmpdir do |dir|
+      reg = RbFoundationModelMacAgent::McpRegistry.new(config_path: File.join(dir, "mcp.json"))
+      scripted = ScriptedEngine.new(["ok"])
+      sess = S.new(agent_def: echo_agent(fs_root: dir), mcp_registry: reg, engine: scripted)
+      sess.turn("hi", display: FakeDisplay.new)
+      sess.reset
+      assert_empty(sess.messages)
+      assert_equal(1, scripted.reset_count)
+    end
+  end
+
   def test_system_prompt_includes_tools_for_llm
     Dir.mktmpdir do |dir|
       reg = RbFoundationModelMacAgent::McpRegistry.new(config_path: File.join(dir, "mcp.json"))
