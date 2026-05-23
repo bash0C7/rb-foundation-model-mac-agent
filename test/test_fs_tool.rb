@@ -41,6 +41,11 @@ class TestFsTool < Test::Unit::TestCase
                  RbFoundationModelMacAgent::FsTool.read(path: "./b.txt", fs_root: @root))
   end
 
+  def test_relative_path_write_resolves_under_fs_root
+    RbFoundationModelMacAgent::FsTool.write(path: "sub/new.txt", content: "hi", fs_root: @root)
+    assert_equal("hi", File.read(File.join(@root, "sub", "new.txt")))
+  end
+
   def test_path_outside_root_rejected
     other = Dir.mktmpdir
     begin
