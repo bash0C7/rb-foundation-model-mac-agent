@@ -12,7 +12,7 @@ Gem::Specification.new do |spec|
   spec.license       = "MIT"
   spec.required_ruby_version = ">= 4.0.0"
 
-  spec.files = Dir["lib/**/*.rb", "agents/*.md", "exe/*", "README.md", "LICENSE"]
+  spec.files = Dir["lib/**/*.rb", "agents/*.md", "exe/*", "acceptance/**/*.rb", "README.md", "LICENSE"]
   spec.bindir        = "exe"
   spec.executables   = ["rb-foundation-model-mac-agent"]
   spec.require_paths = ["lib"]
