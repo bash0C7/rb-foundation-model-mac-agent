@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "tool_call"
-require_relative "echo_engine"
+require_relative "scripted_engine"
 require_relative "apple_fm_engine"
 require_relative "ollama_engine"
 
@@ -64,13 +64,13 @@ module RbFoundationModelMacAgent
       case agent_def.fetch(:engine)
       when "apple-fm" then AppleFmEngine.new(system_prompt: system_prompt)
       when "ollama"   then OllamaEngine.new(model: agent_def.fetch(:model), system_prompt: system_prompt)
-      when "echo"     then EchoEngine.new
+      when "scripted" then ScriptedEngine.new(replies: agent_def[:scripted_replies])
       else raise "unknown engine: #{agent_def[:engine]}"
       end
     end
 
     def build_system_prompt(agent_def, mcp_registry)
-      return agent_def[:body] if agent_def[:engine] == "echo"
+      return agent_def[:body] if agent_def[:engine] == "scripted"
       "#{agent_def[:body]}\n\n## Available tools\n\n#{render_tools(agent_def, mcp_registry)}\n\n#{tool_call_format_guide}"
     end
 

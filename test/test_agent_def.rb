@@ -49,7 +49,7 @@ class TestAgentDef < Test::Unit::TestCase
       write(File.join(gem_dir, "agents", "y.md"), <<~MD)
         ---
         name: y
-        engine: echo
+        engine: scripted
         ---
         hello
       MD
@@ -71,14 +71,14 @@ class TestAgentDef < Test::Unit::TestCase
         write(File.join(gem_dir, "agents", "x.md"), <<~MD)
           ---
           name: x
-          engine: echo
+          engine: scripted
           ---
           gem body
         MD
         write(File.join(project_dir, "agents", "x.md"), <<~MD)
           ---
           name: x
-          engine: echo
+          engine: scripted
           ---
           project body
         MD
@@ -120,14 +120,49 @@ class TestAgentDef < Test::Unit::TestCase
   def test_list_dedupes_with_project_priority
     Dir.mktmpdir do |gem_dir|
       Dir.mktmpdir do |project_dir|
-        write(File.join(gem_dir, "agents", "x.md"), "---\nname: x\nengine: echo\n---\ngem\n")
-        write(File.join(gem_dir, "agents", "y.md"), "---\nname: y\nengine: echo\n---\ngem\n")
-        write(File.join(project_dir, "agents", "x.md"), "---\nname: x\nengine: echo\n---\nproj\n")
-        write(File.join(project_dir, "agents", "z.md"), "---\nname: z\nengine: echo\n---\nproj\n")
+        write(File.join(gem_dir, "agents", "x.md"), "---\nname: x\nengine: scripted\n---\ngem\n")
+        write(File.join(gem_dir, "agents", "y.md"), "---\nname: y\nengine: scripted\n---\ngem\n")
+        write(File.join(project_dir, "agents", "x.md"), "---\nname: x\nengine: scripted\n---\nproj\n")
+        write(File.join(project_dir, "agents", "z.md"), "---\nname: z\nengine: scripted\n---\nproj\n")
         names = AD.list(gem_agents_dir: File.join(gem_dir, "agents"),
                         project_agents_dir: File.join(project_dir, "agents"))
         assert_equal(%w[x y z], names)
       end
+    end
+  end
+
+  def test_scripted_replies_default_is_input_placeholder
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "x.md"), <<~MD)
+        ---
+        name: x
+        engine: scripted
+        ---
+        body
+      MD
+      agent = RbFoundationModelMacAgent::AgentDef.load(
+        "x", gem_agents_dir: dir, project_agents_dir: nil,
+      )
+      assert_equal(["{input}"], agent[:scripted_replies])
+    end
+  end
+
+  def test_scripted_replies_from_frontmatter
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "y.md"), <<~MD)
+        ---
+        name: y
+        engine: scripted
+        scripted_replies:
+          - first
+          - second
+        ---
+        body
+      MD
+      agent = RbFoundationModelMacAgent::AgentDef.load(
+        "y", gem_agents_dir: dir, project_agents_dir: nil,
+      )
+      assert_equal(%w[first second], agent[:scripted_replies])
     end
   end
 end

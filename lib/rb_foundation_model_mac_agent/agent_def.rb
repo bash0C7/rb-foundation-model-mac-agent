@@ -10,6 +10,7 @@ module RbFoundationModelMacAgent
       allowed_mcp: [].freeze,
       allowed_builtin: [].freeze,
       max_iters: 8,
+      scripted_replies: ["{input}"].freeze,
     }.freeze
 
     FRONTMATTER_RE = /\A---\n(.*?)\n---\n(.*)\z/m
@@ -63,6 +64,7 @@ module RbFoundationModelMacAgent
         allowed_mcp:     fm["allowed_mcp"]     || DEFAULTS[:allowed_mcp],
         allowed_builtin: fm["allowed_builtin"] || DEFAULTS[:allowed_builtin],
         max_iters:       fm["max_iters"]       || DEFAULTS[:max_iters],
+        scripted_replies: fm["scripted_replies"] || DEFAULTS[:scripted_replies],
         body:            body,
       )
     end
@@ -70,7 +72,7 @@ module RbFoundationModelMacAgent
     def validate!(fm, path)
       raise "agent file #{path} missing 'name'"   unless fm["name"].is_a?(String)
       raise "agent file #{path} missing 'engine'" unless fm["engine"].is_a?(String)
-      unless %w[apple-fm ollama echo].include?(fm["engine"])
+      unless %w[apple-fm ollama scripted].include?(fm["engine"])
         raise "agent file #{path} has unknown engine: #{fm["engine"]}"
       end
     end

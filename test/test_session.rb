@@ -8,9 +8,10 @@ class TestSession < Test::Unit::TestCase
 
   def echo_agent(overrides = {})
     {
-      name: "yamabiko", engine: "echo", model: "default", fs_root: ".",
+      name: "yamabiko", engine: "scripted", model: "default", fs_root: ".",
       allowed_mcp: [], allowed_builtin: [],
       max_iters: 4, body: "山彦",
+      scripted_replies: ["{input}"],
     }.merge(overrides)
   end
 
@@ -104,7 +105,7 @@ class TestSession < Test::Unit::TestCase
     end
   end
 
-  def test_system_prompt_echo_engine_skips_tools_section
+  def test_system_prompt_scripted_engine_skips_tools_section
     Dir.mktmpdir do |dir|
       reg = RbFoundationModelMacAgent::McpRegistry.new(config_path: File.join(dir, "mcp.json"))
       sess = S.new(agent_def: echo_agent(fs_root: dir), mcp_registry: reg)

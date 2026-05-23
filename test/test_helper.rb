@@ -7,25 +7,28 @@ require "rb_foundation_model_mac_agent"
 # Drives Session in tests by yielding a pre-canned sequence of assistant
 # strings (one per Session#turn iteration). Captures every messages array
 # it was called with so tests can assert ReAct history shaping.
-class ScriptedEngine
+class SpyScriptedEngine < RbFoundationModelMacAgent::ScriptedEngine
   attr_reader :calls, :reset_count
 
   def initialize(replies)
-    @replies = replies.dup
+    super(replies: replies)
     @calls = []
     @reset_count = 0
   end
 
   def stream(messages, &block)
     @calls << messages.map { |m| m.dup }
-    text = @replies.shift or raise "ScriptedEngine: out of scripted replies"
-    block.call(text)
+    super
   end
 
-  def reset; @reset_count += 1; end
-
-  def close; end
+  def reset
+    @reset_count += 1
+    super
+  end
 end
+
+# Backwards-compat alias for any test still saying `ScriptedEngine.new(...)`.
+ScriptedEngine = SpyScriptedEngine
 
 # Capture-only stand-in for the baslash display surface.
 class FakeDisplay
