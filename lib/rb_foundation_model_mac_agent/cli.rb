@@ -15,6 +15,17 @@ module RbFoundationModelMacAgent
     PROJECT_DIR_NAME = ".rb-foundation-model-mac-agent"
     GEM_AGENTS_DIR = File.expand_path("../../agents", __dir__)
 
+    # Module-level slots for mutable state referenced from the on_submit
+    # block. Baslash wraps on_submit in Ractor.shareable_proc which rejects
+    # closures over mutable locals; constant lookup of this module is
+    # Ractor-shareable, and the handler itself runs on the main thread
+    # (see Baslash::SlashDispatcher), so dereferencing non-shareable values
+    # via the constant is safe at call time.
+    class << self
+      attr_accessor :current_session, :current_registry,
+                    :current_agent_def, :current_project_agents
+    end
+
     module_function
 
     def run(argv)
@@ -28,6 +39,11 @@ module RbFoundationModelMacAgent
                                 project_agents_dir: project_agents)
       registry = McpRegistry.new(config_path: mcp_config)
       session  = Session.new(agent_def: agent_def, mcp_registry: registry)
+
+      CLI.current_session        = session
+      CLI.current_registry       = registry
+      CLI.current_agent_def      = agent_def
+      CLI.current_project_agents = project_agents
 
       at_exit { session.close; registry.close_all }
 
@@ -60,7 +76,7 @@ module RbFoundationModelMacAgent
           next if line.strip.empty?
           ctx.state[:phase] = :working
           begin
-            session.turn(line, display: ctx.display)
+            RbFoundationModelMacAgent::CLI.current_session.turn(line, display: ctx.display)
           rescue StandardError => e
             ctx.display.dialog("error: #{e.class}: #{e.message}", style: :warn)
             ctx.logger.error(e.full_message) if ctx.respond_to?(:logger)
