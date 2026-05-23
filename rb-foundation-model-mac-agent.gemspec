@@ -20,6 +20,7 @@ Gem::Specification.new do |spec|
   spec.add_dependency "baslash"
   spec.add_dependency "rb-foundation-model-mac"
   spec.add_dependency "mcp", "~> 0.17"
+  spec.add_dependency "base64"
 
   spec.add_development_dependency "test-unit", "~> 3.6"
   spec.add_development_dependency "webmock",   "~> 3.0"
