@@ -48,4 +48,11 @@ class TestScriptedEngine < Test::Unit::TestCase
     engine = E.new(replies: ["x"])
     assert_nothing_raised { engine.close }
   end
+
+  def test_fixed_reply_does_not_require_messages
+    engine = E.new(replies: ["fixed"])
+    out = nil
+    engine.stream([]) { |chunk| out = chunk }
+    assert_equal("fixed", out)
+  end
 end

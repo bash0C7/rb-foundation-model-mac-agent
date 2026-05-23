@@ -10,8 +10,8 @@ require "rb_foundation_model_mac_agent"
 class SpyScriptedEngine < RbFoundationModelMacAgent::ScriptedEngine
   attr_reader :calls, :reset_count
 
-  def initialize(replies)
-    super(replies: replies)
+  def initialize(replies:, **opts)
+    super(replies: replies, **opts)
     @calls = []
     @reset_count = 0
   end

@@ -9,7 +9,7 @@ module RbFoundationModelMacAgent
 
     def stream(messages, &block)
       raise "ScriptedEngine: out of scripted replies" if @index >= @replies.size
-      text = @replies[@index].gsub("{input}", messages.last.fetch(:content))
+      text = @replies[@index].gsub("{input}") { messages.last.fetch(:content) }
       @index += 1
       block.call(text)
     end

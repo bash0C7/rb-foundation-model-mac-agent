@@ -40,7 +40,7 @@ class TestSession < Test::Unit::TestCase
         engine: "apple-fm",       # routed via injected engine, not actually used
         fs_root: dir, allowed_builtin: ["fs.read"],
       )
-      scripted = ScriptedEngine.new([
+      scripted = ScriptedEngine.new(replies: [
         "Let me read the file.\n```tool_call\nname: fs.read\nargs:\n  path: #{path}\n```",
         "The file contains FILECONTENT.",
       ])
@@ -61,7 +61,7 @@ class TestSession < Test::Unit::TestCase
       reg = RbFoundationModelMacAgent::McpRegistry.new(config_path: File.join(dir, "mcp.json"))
       agent = echo_agent(fs_root: dir, max_iters: 2, allowed_builtin: ["fs.read"])
       forever = "```tool_call\nname: fs.read\nargs:\n  path: #{File.join(dir, "nope.txt")}\n```"
-      scripted = ScriptedEngine.new([forever, forever, forever])
+      scripted = ScriptedEngine.new(replies: [forever, forever, forever])
       sess = S.new(agent_def: agent, mcp_registry: reg, engine: scripted)
       display = FakeDisplay.new
       sess.turn("loop pls", display: display)
@@ -84,7 +84,7 @@ class TestSession < Test::Unit::TestCase
   def test_reset_also_resets_engine
     Dir.mktmpdir do |dir|
       reg = RbFoundationModelMacAgent::McpRegistry.new(config_path: File.join(dir, "mcp.json"))
-      scripted = ScriptedEngine.new(["ok"])
+      scripted = ScriptedEngine.new(replies: ["ok"])
       sess = S.new(agent_def: echo_agent(fs_root: dir), mcp_registry: reg, engine: scripted)
       sess.turn("hi", display: FakeDisplay.new)
       sess.reset
@@ -97,7 +97,7 @@ class TestSession < Test::Unit::TestCase
     Dir.mktmpdir do |dir|
       reg = RbFoundationModelMacAgent::McpRegistry.new(config_path: File.join(dir, "mcp.json"))
       agent = echo_agent(engine: "ollama", allowed_builtin: ["fs.read"], fs_root: dir)
-      scripted = ScriptedEngine.new(["ok"])
+      scripted = ScriptedEngine.new(replies: ["ok"])
       sess = S.new(agent_def: agent, mcp_registry: reg, engine: scripted)
       sess.turn("hi", display: FakeDisplay.new)
       assert_match(/Available tools/, sess.system_prompt)
