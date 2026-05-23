@@ -11,16 +11,19 @@ end
 
 task default: :test
 
-namespace :acceptance do
+module AcceptancePaths
   WORK = "/tmp/agent-acceptance"
   REPO = __dir__
+end
 
+namespace :acceptance do
   def apple_fm_available?
     require "foundation_model_mac"
     s = AppleFoundationModel::Session.new(instructions: "")
     s.close if s.respond_to?(:close)
     true
-  rescue StandardError
+  rescue StandardError => e
+    warn "[acceptance] Apple FM probe failed: #{e.class}: #{e.message}"
     false
   end
 
@@ -32,16 +35,16 @@ namespace :acceptance do
     require_relative "acceptance/trace_display"
     require "fileutils"
 
-    FileUtils.mkdir_p(WORK)
-    FileUtils.rm_rf("#{WORK}/.rb-foundation-model-mac-agent")
-    FileUtils.cp("#{REPO}/acceptance/fixtures/sample.rb", "#{WORK}/sample.rb")
+    FileUtils.mkdir_p(AcceptancePaths::WORK)
+    FileUtils.rm_rf("#{AcceptancePaths::WORK}/.rb-foundation-model-mac-agent")
+    FileUtils.cp("#{AcceptancePaths::REPO}/acceptance/fixtures/sample.rb", "#{AcceptancePaths::WORK}/sample.rb")
 
     agent_def = RbFoundationModelMacAgent::AgentDef.load(
       "ruby-coder",
-      gem_agents_dir: "#{REPO}/agents", project_agents_dir: nil,
-    ).merge(fs_root: WORK)
+      gem_agents_dir: "#{AcceptancePaths::REPO}/agents", project_agents_dir: nil,
+    ).merge(fs_root: AcceptancePaths::WORK)
     registry = RbFoundationModelMacAgent::McpRegistry.new(
-      config_path: "#{WORK}/.rb-foundation-model-mac-agent/mcp.json",
+      config_path: "#{AcceptancePaths::WORK}/.rb-foundation-model-mac-agent/mcp.json",
     )
     session = RbFoundationModelMacAgent::Session.new(
       agent_def: agent_def, mcp_registry: registry,
@@ -49,7 +52,7 @@ namespace :acceptance do
 
     puts "━━━ L1 Agent Acceptance ━━━"
     puts "agent: #{agent_def[:name]} (engine: #{agent_def[:engine]})"
-    puts "fs_root: #{WORK}"
+    puts "fs_root: #{AcceptancePaths::WORK}"
     prompt = "Read ./sample.rb and tell me what class it defines."
     puts "prompt: #{prompt.inspect}"
     puts
@@ -66,17 +69,17 @@ namespace :acceptance do
   task :l2 do
     session_name = "acceptance-l2"
     require "fileutils"
-    FileUtils.mkdir_p(WORK)
-    FileUtils.rm_rf("#{WORK}/.rb-foundation-model-mac-agent")
-    FileUtils.cp("#{REPO}/acceptance/fixtures/sample.rb", "#{WORK}/sample.rb")
+    FileUtils.mkdir_p(AcceptancePaths::WORK)
+    FileUtils.rm_rf("#{AcceptancePaths::WORK}/.rb-foundation-model-mac-agent")
+    FileUtils.cp("#{AcceptancePaths::REPO}/acceptance/fixtures/sample.rb", "#{AcceptancePaths::WORK}/sample.rb")
     sh "screen -X -S #{session_name} quit 2>/dev/null || true"
 
     sh <<~CMD
       screen -dmS #{session_name} bash -c "
-        cd '#{WORK}'
+        cd '#{AcceptancePaths::WORK}'
         export RBENV_VERSION=4.0.3
-        export BUNDLE_GEMFILE='#{REPO}/Gemfile'
-        exec bundle exec '#{REPO}/exe/rb-foundation-model-mac-agent' yamabiko 2>&1 | tee '#{WORK}/l2.log'
+        export BUNDLE_GEMFILE='#{AcceptancePaths::REPO}/Gemfile'
+        exec bundle exec '#{AcceptancePaths::REPO}/exe/rb-foundation-model-mac-agent' yamabiko 2>&1 | tee '#{AcceptancePaths::WORK}/l2.log'
       "
     CMD
     sleep 2
@@ -96,7 +99,7 @@ namespace :acceptance do
 
       ━━━ L2 TUI Acceptance — driver done ━━━
       Inspect: screen -r #{session_name}
-      Log:     tail -f #{WORK}/l2.log
+      Log:     tail -f #{AcceptancePaths::WORK}/l2.log
       Cleanup: rake acceptance:l2_kill
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     MSG
@@ -113,17 +116,17 @@ namespace :acceptance do
 
     session_name = "acceptance-l3"
     require "fileutils"
-    FileUtils.mkdir_p(WORK)
-    FileUtils.rm_rf("#{WORK}/.rb-foundation-model-mac-agent")
-    FileUtils.cp("#{REPO}/acceptance/fixtures/sample.rb", "#{WORK}/sample.rb")
+    FileUtils.mkdir_p(AcceptancePaths::WORK)
+    FileUtils.rm_rf("#{AcceptancePaths::WORK}/.rb-foundation-model-mac-agent")
+    FileUtils.cp("#{AcceptancePaths::REPO}/acceptance/fixtures/sample.rb", "#{AcceptancePaths::WORK}/sample.rb")
     sh "screen -X -S #{session_name} quit 2>/dev/null || true"
 
     sh <<~CMD
       screen -dmS #{session_name} bash -c "
-        cd '#{WORK}'
+        cd '#{AcceptancePaths::WORK}'
         export RBENV_VERSION=4.0.3
-        export BUNDLE_GEMFILE='#{REPO}/Gemfile'
-        exec bundle exec '#{REPO}/exe/rb-foundation-model-mac-agent' ruby-coder 2>&1 | tee '#{WORK}/l3.log'
+        export BUNDLE_GEMFILE='#{AcceptancePaths::REPO}/Gemfile'
+        exec bundle exec '#{AcceptancePaths::REPO}/exe/rb-foundation-model-mac-agent' ruby-coder 2>&1 | tee '#{AcceptancePaths::WORK}/l3.log'
       "
     CMD
     sleep 2
@@ -136,7 +139,7 @@ namespace :acceptance do
       ━━━ L3 E2E Acceptance — driver done ━━━
       Apple FM inference is slow (~10-30s per iter, max_iters=8).
       Attach:  screen -r #{session_name}
-      Log:     tail -f #{WORK}/l3.log
+      Log:     tail -f #{AcceptancePaths::WORK}/l3.log
       Cleanup: rake acceptance:l3_kill
       ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     MSG

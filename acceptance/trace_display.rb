@@ -16,7 +16,7 @@ class TraceDisplay
   end
 
   def dialog(content, style: nil)
-    @io.puts "[iter #{@iter}] #{style || :dialog}:"
+    @io.puts "[#{style || :dialog}]:"
     indent(content)
     @io.puts
   end
