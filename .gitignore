@@ -1,0 +1,9 @@
+/.bundle/
+/vendor/bundle/
+/Gemfile.lock
+/tmp/
+/.rb-foundation-model-mac-agent/
+*.gem
+
+# 開発 process doc (CLAUDE.md 規約により commit しない)
+/docs/superpowers/
