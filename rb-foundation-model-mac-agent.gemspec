@@ -19,6 +19,8 @@ Gem::Specification.new do |spec|
 
   spec.add_dependency "baslash"
   spec.add_dependency "rb-foundation-model-mac"
+  spec.add_dependency "rb-natural-language-mac"
+  spec.add_dependency "rb-translation-mac"
   spec.add_dependency "mcp", "~> 0.17"
   # base64 is a transitive runtime dep of mcp (oauth/flow.rb requires "base64")
   # which is no longer bundled in Ruby 4.x. Pinning here until upstream declares it.
