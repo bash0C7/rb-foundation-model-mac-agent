@@ -120,9 +120,10 @@ Inside the REPL:
 
 - Backed by `rb-foundation-model-mac` → Apple FoundationModels framework
 - ~3B parameters, 4096-token context window
-- **Self-healing**: on `exceededContextWindowSize` the engine compacts history (`ContextCompactor`) and retries up to 2 times before propagating the error
+- **Self-healing**: on `exceededContextWindowSize` the engine compacts history (`ContextCompactor`, last 3 entries kept full) and retries up to 2 times before propagating the error
 - **Cancel-on-fence**: the stream is cancelled after the first complete fenced block (any language tag) to prevent run-away concatenation seen with small models
-- **Tool-call parsing is permissive**: a fenced block with a YAML `name: <ns>.<tool>` payload is accepted regardless of fence language (Apple FM frequently emits `` ```ruby `` instead of `` ```tool_call ``)
+- **Hard byte ceiling**: a single stream is capped at `MAX_STREAM_BYTES = 4096` (≈ 1365 rough tokens). This is the safety net for the "open fence never closes" failure mode where Apple FM emits an unterminated `` ```ruby `` block and would otherwise generate megabytes inside one turn
+- **Tool-call parsing is permissive**: a fenced block with a YAML `name: <ns>.<tool>` payload is accepted regardless of fence language (Apple FM frequently emits `` ```ruby `` instead of `` ```tool_call ``). `name` must match `[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*` — malformed YAML or non-matching names are silently treated as a final answer
 
 ### `ollama`
 
@@ -147,9 +148,11 @@ Failures (model not downloaded, unsupported pair) fall back to raw input with a 
 
 ## Known limitations
 
-- **Apple FM format compliance** is shaky at ~3B params; the parser tolerates `` ```ruby ``-flavored fences but the model still occasionally emits malformed YAML or paraphrases the schema. When that happens the turn is treated as a final answer.
-- **4096-token context** is small. Long conversations or large files will trigger the self-healing compaction path; the gem prefers correctness (compact + retry) over speed.
-- **Translation framework** downloads its language pack on first use — the OS may show a system dialog. Pre-download via the System Settings → Language & Region → Translation Languages screen for unattended runs.
+- **Apple FM format compliance** is shaky at ~3B params. The parser tolerates `` ```ruby ``-flavored fences, but the model can still emit malformed YAML, paraphrase the schema, or skip the tool altogether and hallucinate a plausible-looking answer. In all of those cases the turn is treated as a final answer; the engine never hangs.
+- **Open-fence runaway**: Apple FM sometimes opens a `` ```ruby `` fence and keeps appending code without ever closing it. The engine's `MAX_STREAM_BYTES = 4096` ceiling stops this after ~4 KB instead of letting the stream consume the whole context window. The half-finished block is then handed to the parser, which rejects it and finalises the turn.
+- **Iter-2 drift after a successful tool call**: on the follow-up turn (after a `fs.read` result is injected) Apple FM occasionally ignores the result and synthesises code from scratch. This is a model-side limitation, not an engine bug — the conversation stays responsive and you can `/reset` if you want a fresh attempt.
+- **4096-token context** is small. Long conversations or large files trigger the self-healing compaction path; the gem prefers correctness (compact + retry) over speed.
+- **Translation framework** downloads its language pack on first use — the OS may show a system dialog. Pre-download via System Settings → Language & Region → Translation Languages for unattended runs.
 - **Ollama backend has no self-healing**; you are responsible for picking a model whose context fits the conversation.
 
 ## Troubleshooting
@@ -158,6 +161,8 @@ Failures (model not downloaded, unsupported pair) fall back to raw input with a 
 |---|---|
 | `Apple Intelligence unavailable: ...` | Settings → Apple Intelligence & Siri → enable, wait for model download |
 | `exceededContextWindowSize` shown twice | engine retried compaction twice and gave up; `/reset` clears history |
+| Apple FM keeps producing code instead of using a tool | Model drift — `/reset` and re-ask. Rephrasing the request to be more imperative (e.g. "Use fs.read to open ./x.rb") raises the chance of a proper tool call |
+| Turn ends abruptly after ~4 KB of output | `MAX_STREAM_BYTES` ceiling fired — the model was producing an unterminated fence. The reply was finalised early on purpose to keep the session responsive |
 | Translation falls back silently | `defaults read com.apple.translation` to verify language packs, or run an interactive Translation usage once to trigger download |
 | MCP server `bad: Failed to spawn` | check `source` path in `.rb-foundation-model-mac-agent/mcp.json`, server must be executable |
 | `Library not loaded: ...FoundationModels.framework` | macOS < 26 — this gem requires Tahoe |
