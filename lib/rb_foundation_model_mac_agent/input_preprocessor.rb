@@ -2,8 +2,8 @@
 
 module RbFoundationModelMacAgent
   class InputPreprocessor
-    PLACEHOLDER_PREFIX = "__SAFE_"
-    PLACEHOLDER_SUFFIX = "__"
+    PLACEHOLDER_PREFIX = "Xxyzzyx"
+    PLACEHOLDER_SUFFIX = "xzzyxX"
     PLACEHOLDER_RE = /#{PLACEHOLDER_PREFIX}\d+#{PLACEHOLDER_SUFFIX}/
 
     def initialize(nl_module: nil, translation_module: nil)
