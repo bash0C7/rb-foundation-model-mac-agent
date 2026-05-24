@@ -4,6 +4,7 @@ require_relative "tool_call"
 require_relative "scripted_engine"
 require_relative "apple_fm_engine"
 require_relative "ollama_engine"
+require_relative "input_preprocessor"
 
 module RbFoundationModelMacAgent
   class Session
@@ -18,9 +19,17 @@ module RbFoundationModelMacAgent
       @system_prompt = build_system_prompt(agent_def, mcp_registry)
       @engine        = engine || build_engine(agent_def, @system_prompt)
       @messages      = []
+      @preprocessor  = build_preprocessor(agent_def)
     end
 
     def turn(user_input, display:)
+      original_lang = "en"
+      if @preprocessor
+        pre = @preprocessor.preprocess(user_input)
+        user_input = pre[:text]
+        original_lang = pre[:original_lang]
+      end
+
       @messages << { role: "user", content: user_input }
       iters = @agent_def[:max_iters]
       iters.times do
@@ -28,7 +37,15 @@ module RbFoundationModelMacAgent
         @messages << { role: "assistant", content: assistant_text }
 
         call = ToolCall.parse(assistant_text)
-        return if call.nil?
+        if call.nil?
+          if @preprocessor && original_lang == "ja"
+            translated = @preprocessor.postprocess(assistant_text, original_lang: original_lang)
+            if translated != assistant_text
+              display.dialog(translated, style: :assistant)
+            end
+          end
+          return
+        end
 
         result = ToolCall.dispatch(
           call,
@@ -58,6 +75,11 @@ module RbFoundationModelMacAgent
       @engine.stream(messages) { |chunk| buf << chunk; slot.update(buf) }
       slot.commit
       buf
+    end
+
+    def build_preprocessor(agent_def)
+      return nil unless agent_def[:preprocess_input] == "ja-en-roundtrip"
+      InputPreprocessor.new
     end
 
     def build_engine(agent_def, system_prompt)
