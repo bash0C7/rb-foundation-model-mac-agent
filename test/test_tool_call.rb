@@ -29,9 +29,9 @@ class TestToolCall < Test::Unit::TestCase
     assert_nil(TC.parse("just a final reply, no fence here"))
   end
 
-  def test_parse_raises_on_malformed_yaml
+  def test_parse_returns_nil_on_malformed_yaml
     text = "```tool_call\nname: fs.read\nargs: [unbalanced\n```\n"
-    assert_raise(Psych::SyntaxError) { TC.parse(text) }
+    assert_nil(TC.parse(text))
   end
 
   def test_dispatch_allowed_builtin

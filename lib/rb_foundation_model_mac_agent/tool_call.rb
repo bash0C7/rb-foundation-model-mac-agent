@@ -5,14 +5,21 @@ require_relative "fs_tool"
 
 module RbFoundationModelMacAgent
   module ToolCall
-    FENCE_RE = /```tool_call\n(.*?)\n```/m
+    FENCE_RE  = /```\w*\n(.*?)\n```/m
+    BANNER_RE = /\A(?:tool_call|tool_use)\s*\n/i
+    NAME_RE   = /\A[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*\z/
 
     module_function
 
     def parse(text)
-      m = text.match(FENCE_RE)
-      return nil unless m
-      YAML.safe_load(m[1], permitted_classes: [Symbol])
+      text.to_s.scan(FENCE_RE).each do |(body)|
+        body = body.sub(BANNER_RE, "")
+        parsed = safe_yaml_load(body)
+        next unless parsed.is_a?(Hash)
+        next unless parsed["name"].is_a?(String) && parsed["name"].match?(NAME_RE)
+        return parsed
+      end
+      nil
     end
 
     def dispatch(call, agent_def:, fs_root:, mcp_registry:)
@@ -33,8 +40,6 @@ module RbFoundationModelMacAgent
       { ok: false, error: e.message }
     end
 
-    # Render a result hash as the ```tool_result fenced block we inject into
-    # the next user message.
     def render_result(name, result)
       payload = { "name" => name, "ok" => result[:ok] }
       if result[:ok]
@@ -43,6 +48,12 @@ module RbFoundationModelMacAgent
         payload["error"] = result[:error].to_s
       end
       "```tool_result\n#{payload.to_yaml.sub(/\A---\n/, '')}```"
+    end
+
+    def safe_yaml_load(body)
+      YAML.safe_load(body, permitted_classes: [Symbol])
+    rescue Psych::SyntaxError
+      nil
     end
   end
 end
