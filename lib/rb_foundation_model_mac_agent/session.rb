@@ -121,6 +121,13 @@ end
         - Emit at most ONE tool_call per turn, then STOP generating.
         - For final answer, omit any tool_call block.
         - fs.* paths resolve to workspace root.
+
+        Example — to read a file:
+        ```tool_call
+        name: fs.read
+        args:
+          path: ./sample.rb
+        ```
       GUIDE
     end
   end
