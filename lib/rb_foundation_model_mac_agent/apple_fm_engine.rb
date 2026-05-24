@@ -7,6 +7,12 @@ module RbFoundationModelMacAgent
   class AppleFmEngine
     MAX_RETRIES = 2
     STOP_FENCE = "\n```\n"
+    # Hard byte ceiling for one stream. Safety net for the "open fence never closes"
+    # failure mode where Apple FM generates an endless body inside a single ```ruby
+    # block without emitting the closing fence. ~4096 bytes ≈ 1365 rough tokens —
+    # comfortably below the 4096-token context window so a single runaway turn
+    # cannot push us into overflow on its own.
+    MAX_STREAM_BYTES = 4096
     # Matches one complete fenced block of any language tag (```tool_call, ```ruby, ```python, ...).
     # Cancels generation after the first block so Apple FM cannot runaway-concatenate blocks.
     FENCE_BLOCK_RE = /```\w*\n.*?\n```/m
@@ -51,7 +57,8 @@ module RbFoundationModelMacAgent
       @session.stream_response(to: input, stop_at: [STOP_FENCE]) do |chunk|
         buf << chunk
         block.call(chunk) if block
-        if !cancelled && FENCE_BLOCK_RE.match?(buf)
+        next if cancelled
+        if FENCE_BLOCK_RE.match?(buf) || buf.bytesize > MAX_STREAM_BYTES
           @session.cancel_stream
           cancelled = true
         end

@@ -183,6 +183,29 @@ class TestAppleFmEngineRecovery < Test::Unit::TestCase
     assert(fake.chunks_yielded <= 4, "cancel must fire by chunk 4 at the latest (got #{fake.chunks_yielded})")
   end
 
+  def test_engine_cancels_when_buffer_exceeds_max_stream_bytes
+    # Reproduces the L3 'open fence never closes' runaway: model emits many chunks
+    # of Ruby code inside an unclosed ```ruby fence. FENCE_BLOCK_RE cannot fire
+    # because there is no closing fence; MAX_STREAM_BYTES is the hard safety net.
+    big_chunk = "x" * 1024  # 4 chunks * 1024 = 4096 bytes triggers cancel on chunk 5
+    fake = FakeCancellableSession.new(chunks: [
+      "```ruby\n",
+      big_chunk,
+      big_chunk,
+      big_chunk,
+      big_chunk,  # by here cumulative > MAX_STREAM_BYTES → cancel
+      "more never reached\n",
+      "```\n",
+    ])
+    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
+      system_prompt: "system",
+      session_builder: ->(_) { fake },
+    )
+    engine.stream([{ role: "user", content: "hi" }]) { |_| }
+    assert_equal(1, fake.cancel_calls, "cancel_stream should fire once buffer crosses MAX_STREAM_BYTES")
+    assert(fake.chunks_yielded <= 5, "no further chunks should be processed after MAX_STREAM_BYTES (got #{fake.chunks_yielded})")
+  end
+
   def test_engine_passes_through_non_overflow_error
     fake = Class.new do
       def stream_response(to:, stop_at: nil)
