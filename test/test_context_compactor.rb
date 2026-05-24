@@ -50,20 +50,17 @@ class TestContextCompactor < Test::Unit::TestCase
   end
 
   def test_short_tool_call_representation
+    # tool_call inflated with a large description comment (no key:value pairs) to push full render
+    # over the 100-token min-budget clamp. Squeezed form has only path= arg (~11 tokens), so
+    # Stage 2 result fits within budget and is returned without Stage 3 dropping it.
+    description = "# " + ("description of what fs.read does " * 8)
+    tool_call_content = "```tool_call\nname: fs.read\nargs:\n  path: ./x.rb\n#{description}\n```"
     messages = [
-      { role: "user", content: "first" },
-      { role: "assistant", content: "```tool_call\nname: fs.read\nargs:\n  path: ./x.rb\n```" },
-      { role: "user", content: "ok" },
-      { role: "assistant", content: "second" },
-      { role: "user", content: "next" },
-      { role: "assistant", content: "third" },
+      { role: "assistant", content: tool_call_content },
       { role: "user", content: "latest" },
     ]
-    out = C.compact(messages, system_prompt_size: 200, target_tokens: 400)
-    # Old tool_call should be compressed to short repr
-    assert(
-      out.include?("[tool_call: fs.read(path=./x.rb)]") || !out.include?("```tool_call"),
-      "old tool_call should be compressed",
-    )
+    # system_prompt_size: 300 => budget = 200 - 100 = 100; full render > 100 => Stage 2 triggers
+    out = C.compact(messages, system_prompt_size: 300, target_tokens: 200)
+    assert_includes(out, "[tool_call: fs.read(path=./x.rb)]", "old tool_call should be compressed to short repr")
   end
 end

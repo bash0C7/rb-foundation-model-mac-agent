@@ -13,11 +13,14 @@ module RbFoundationModelMacAgent
     def compact(messages, system_prompt_size:, target_tokens:)
       return "" if messages.empty?
 
-      budget = target_tokens - rough_tokens(system_prompt_size_chars: system_prompt_size)
+      rendered = messages.map { |m| render_full(m) }
+      budget = target_tokens - (system_prompt_size / 3)
       budget = 100 if budget < 100  # always leave room
 
-      # Stage 2: squeeze all entries except the last one (always applied)
-      # Last entry stays full; older tool_call/tool_result/long entries are compressed
+      # Stage 1: full render fits within budget
+      return rendered.join("\n") if total_tokens(rendered) <= budget
+
+      # Stage 2: squeeze older entries, keep last entry full
       last_idx = messages.length - 1
       rendered = messages.each_with_index.map do |m, i|
         i == last_idx ? render_full(m) : render_squeezed(m)
@@ -43,7 +46,7 @@ module RbFoundationModelMacAgent
       if (m = content.match(/```tool_call\n(.*?)\n```/m))
         body = m[1]
         name = body[/name:\s*(\S+)/, 1]
-        args = body.scan(/(\w+):\s*(\S+)/).reject { |k, _| k == "name" || k == "args" }
+        args = body.scan(/(\w+):[ \t]*(\S+)/).reject { |k, _| k == "name" || k == "args" }
         args_str = args.map { |k, v| "#{k}=#{v}" }.join(", ")
         return "#{msg[:role]}: [tool_call: #{name}(#{args_str})]"
       end
@@ -69,10 +72,7 @@ module RbFoundationModelMacAgent
       "#{msg[:role]}: #{content}"
     end
 
-    def rough_tokens(text = nil, system_prompt_size_chars: nil)
-      if system_prompt_size_chars
-        return system_prompt_size_chars / 3
-      end
+    def rough_tokens(text)
       text.to_s.bytesize / 3
     end
 
