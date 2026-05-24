@@ -45,10 +45,14 @@ module RbFoundationModelMacAgent
       input = @recovery_input || messages.last.fetch(:content)
       @recovery_input = nil
       buf = +""
+      cancelled = false
       @session.stream_response(to: input, stop_at: [STOP_FENCE]) do |chunk|
         buf << chunk
         block.call(chunk) if block
-        @session.cancel_stream if ToolCall::FENCE_RE.match?(buf)
+        if !cancelled && ToolCall::FENCE_RE.match?(buf)
+          @session.cancel_stream
+          cancelled = true
+        end
       end
       buf
     end
