@@ -65,7 +65,7 @@ module RbFoundationModelMacAgent
       out = text.dup
       placeholders.each do |ph, original|
         unless out.include?(ph)
-          # placeholder was mangled by translation — silent fallback to original
+          warn "InputPreprocessor: placeholder #{ph} mangled by translation, returning partial output"
           return out
         end
         out = out.sub(ph, original)
@@ -78,7 +78,8 @@ module RbFoundationModelMacAgent
     def detect_language_safe(text)
       raw = @nl.detect_language(text)
       raw.to_s.empty? ? "en" : raw
-    rescue StandardError
+    rescue StandardError => e
+      warn "InputPreprocessor: detect_language failed (#{e.class}: #{e.message}); defaulting to en"
       "en"
     end
 
@@ -87,9 +88,12 @@ module RbFoundationModelMacAgent
       if r.respond_to?(:success) && r.success
         { ok: true, text: r.text }
       else
+        err = r.respond_to?(:error) ? r.error : "unknown"
+        warn "InputPreprocessor: translate #{from}->#{to} failed: #{err}; raw fallback"
         { ok: false }
       end
-    rescue StandardError
+    rescue StandardError => e
+      warn "InputPreprocessor: translate #{from}->#{to} raised (#{e.class}: #{e.message}); raw fallback"
       { ok: false }
     end
 
