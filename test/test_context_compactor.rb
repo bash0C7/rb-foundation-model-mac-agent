@@ -12,28 +12,56 @@ class TestContextCompactor < Test::Unit::TestCase
     assert_includes(out, "hello")
   end
 
-  def test_preserves_recent_pair_full
+  def test_preserves_last_three_entries_in_full
+    # 5 entries: old pair (0,1) squeezed when over budget, last 3 (2,3,4) kept full
+    long = "x" * 4000
     messages = [
       { role: "user", content: "old request" },
-      { role: "assistant", content: "old answer" },
-      { role: "user", content: "[tool_result]\nname: fs.read\nok: true\ncontent: foo" },
-      { role: "user", content: "new request" },
+      { role: "assistant", content: "```tool_call\nname: fs.read\nargs:\n  path: ./old.rb\n```" },
+      { role: "user", content: "[recent context]" },
+      { role: "assistant", content: "```tool_call\nname: fs.read\nargs:\n  path: ./now.rb\n```" },
+      { role: "user", content: "```tool_result\nname: fs.read\nok: true\ncontent: #{long}\n```" },
     ]
-    out = C.compact(messages, system_prompt_size: 200, target_tokens: 3500)
-    assert_includes(out, "new request")
-    assert_includes(out, "old answer")  # recent pair preserved
+    out = C.compact(messages, system_prompt_size: 200, target_tokens: 1500)
+    # last 3 entries kept full (not squeezed)
+    assert_includes(out, "[recent context]", "index 2 (recent pair start) must be full")
+    assert_includes(out, "./now.rb",         "index 3 (recent tool_call) must be full")
+    assert_includes(out, long[0, 200],       "index 4 (most-recent tool_result content head) preserved")
+    # old assistant tool_call was squeezed to short repr
+    assert_includes(out, "[tool_call: fs.read(path=./old.rb)]",
+                    "index 1 (old tool_call) must be squeezed")
+  end
+
+  def test_squeezes_only_entries_before_last_three
+    messages = (0..6).map do |i|
+      role = i.even? ? "user" : "assistant"
+      content = i < 4 ? "```tool_call\nname: fs.read\nargs:\n  path: ./f#{i}.rb\n```" : "msg #{i}"
+      { role: role, content: content }
+    end
+    out = C.compact(messages, system_prompt_size: 200, target_tokens: 300)
+    # indexes 4, 5, 6 are within the keep-full-3 window — must appear verbatim
+    assert_includes(out, "msg 4")
+    assert_includes(out, "msg 5")
+    assert_includes(out, "msg 6")
+    # indexes 0..3 either squeezed or dropped, but if present must be squeeze repr
+    if out.include?("f3.rb")
+      assert_includes(out, "[tool_call: fs.read(path=./f3.rb)]")
+    end
   end
 
   def test_truncates_long_tool_result_content_when_over_budget
-    long = (1..200).map { |i| "line #{i}" }.join("\n")
+    # tool_result at index 2 (older than the last-3 window), should be squeezed
+    older_long = (1..300).map { |i| "line #{i}" }.join("\n")
     messages = [
       { role: "user", content: "first" },
-      { role: "assistant", content: "```tool_call\nname: fs.read\nargs:\n  path: ./big.rb\n```" },
-      { role: "user", content: "```tool_result\nname: fs.read\nok: true\ncontent: |\n  #{long}\n```" },
+      { role: "assistant", content: "```tool_call\nname: fs.read\nargs:\n  path: ./old.rb\n```" },
+      { role: "user", content: "```tool_result\nname: fs.read\nok: true\ncontent: |\n  #{older_long}\n```" },
+      { role: "user", content: "next" },
+      { role: "assistant", content: "next answer" },
       { role: "user", content: "go" },
     ]
     out = C.compact(messages, system_prompt_size: 200, target_tokens: 400)
-    assert_includes(out, "truncated", "long tool_result content should be truncated marker")
+    assert_includes(out, "truncated", "long tool_result content (old, index 2) should be truncated")
     assert(out.bytesize / 3 <= 400 + 200, "compacted size should not exceed target by much")
   end
 
@@ -43,23 +71,20 @@ class TestContextCompactor < Test::Unit::TestCase
       { role: role, content: "turn #{i} " * 100 }
     end
     out = C.compact(messages, system_prompt_size: 200, target_tokens: 300)
-    # Latest turn must still be present
-    assert_includes(out, "turn 9")
-    # Oldest turn should be dropped
-    assert(!out.include?("turn 0"), "oldest turn should be dropped")
+    assert_includes(out, "turn 10", "latest turn must still be present")
+    assert(!out.include?("turn 1 turn 1 turn 1"), "oldest turns should be dropped")
   end
 
   def test_short_tool_call_representation
-    # tool_call inflated with a large description comment (no key:value pairs) to push full render
-    # over the 100-token min-budget clamp. Squeezed form has only path= arg (~11 tokens), so
-    # Stage 2 result fits within budget and is returned without Stage 3 dropping it.
     description = "# " + ("description of what fs.read does " * 8)
     tool_call_content = "```tool_call\nname: fs.read\nargs:\n  path: ./x.rb\n#{description}\n```"
     messages = [
       { role: "assistant", content: tool_call_content },
+      { role: "user", content: "filler 1" },
+      { role: "assistant", content: "filler 2" },
       { role: "user", content: "latest" },
     ]
-    # system_prompt_size: 300 => budget = 200 - 100 = 100; full render > 100 => Stage 2 triggers
+    # 4 entries: last 3 (filler1, filler2, latest) kept full, index 0 squeezed
     out = C.compact(messages, system_prompt_size: 300, target_tokens: 200)
     assert_includes(out, "[tool_call: fs.read(path=./x.rb)]", "old tool_call should be compressed to short repr")
   end
