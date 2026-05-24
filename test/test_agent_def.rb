@@ -165,4 +165,24 @@ class TestAgentDef < Test::Unit::TestCase
       assert_equal(%w[first second], agent[:scripted_replies])
     end
   end
+
+  def test_loads_preprocess_input_field
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, "demo.md"), <<~MD)
+        ---
+        name: demo
+        engine: apple-fm
+        model: default
+        fs_root: .
+        allowed_mcp: []
+        allowed_builtin: []
+        max_iters: 4
+        preprocess_input: ja-en-roundtrip
+        ---
+        body text
+      MD
+      ad = RbFoundationModelMacAgent::AgentDef.load("demo", gem_agents_dir: dir, project_agents_dir: nil)
+      assert_equal("ja-en-roundtrip", ad[:preprocess_input])
+    end
+  end
 end

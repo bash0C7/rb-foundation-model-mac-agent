@@ -56,7 +56,7 @@ module RbFoundationModelMacAgent
 
       validate!(fm, path)
 
-      DEFAULTS.merge(
+      result = DEFAULTS.merge(
         name:            fm.fetch("name"),
         engine:          fm.fetch("engine"),
         model:           fm["model"]           || DEFAULTS[:model],
@@ -67,6 +67,8 @@ module RbFoundationModelMacAgent
         scripted_replies: fm["scripted_replies"] || DEFAULTS[:scripted_replies],
         body:            body,
       )
+      result[:preprocess_input] = fm["preprocess_input"] if fm.key?("preprocess_input")
+      result
     end
 
     def validate!(fm, path)
