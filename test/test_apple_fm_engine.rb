@@ -62,6 +62,33 @@ class FakeOverflowSession
   def cancel_stream; @cancel_calls += 1; end
 end
 
+# Honors cancel_stream by breaking the chunk loop on the next iteration,
+# mirroring how the real Apple FM Swift task observes Task.isCancelled.
+class FakeCancellableSession
+  attr_reader :cancel_calls, :chunks_yielded
+  def initialize(chunks:)
+    @chunks = chunks
+    @cancel_calls = 0
+    @chunks_yielded = 0
+    @cancelled = false
+  end
+  def stream_response(to:, stop_at: nil)
+    out = +""
+    @chunks.each do |c|
+      break if @cancelled
+      yield c
+      out << c
+      @chunks_yielded += 1
+    end
+    out
+  end
+  def cancel_stream
+    @cancel_calls += 1
+    @cancelled = true
+  end
+  def close; end
+end
+
 class TestAppleFmEngineRecovery < Test::Unit::TestCase
   def test_engine_retries_once_on_overflow
     fake = FakeOverflowSession.new(behaviors: [
@@ -93,6 +120,67 @@ class TestAppleFmEngineRecovery < Test::Unit::TestCase
       engine.stream([{ role: "user", content: "hello" }]) { |_| }
     end
     assert_equal(3, fake.stream_calls)  # initial + 2 retries
+  end
+
+  def test_engine_cancels_after_first_complete_tool_call_block
+    fake = FakeCancellableSession.new(chunks: [
+      "```tool_call\n",
+      "name: fs.read\n",
+      "args:\n  key: ./sample.rb\n",
+      "```\n",                 # closing fence — cancel should fire here
+      "```tool_call\n",         # never reached
+      "name: fs.write\n",
+      "```\n",
+    ])
+    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
+      system_prompt: "system",
+      session_builder: ->(_) { fake },
+    )
+    engine.stream([{ role: "user", content: "hi" }]) { |_| }
+    assert_equal(1, fake.cancel_calls, "cancel_stream should fire once after first tool_call block")
+    assert_equal(4, fake.chunks_yielded, "no further chunks should be processed after cancel")
+  end
+
+  def test_engine_cancels_after_first_complete_fenced_block_of_any_language
+    # Reproduces the L3 ```ruby flavor hang: Apple FM emits a ruby code block
+    # back-to-back. Engine must cancel after the first block even though the
+    # language tag is not "tool_call".
+    fake = FakeCancellableSession.new(chunks: [
+      "```ruby\n",
+      "fs.read \"./sample.rb\"\n",
+      "```\n",                  # closing fence — cancel should fire here
+      "```ruby\n",               # never reached
+      "fs.read \"./sample.rb\"\n",
+      "```\n",
+    ])
+    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
+      system_prompt: "system",
+      session_builder: ->(_) { fake },
+    )
+    engine.stream([{ role: "user", content: "hi" }]) { |_| }
+    assert_equal(1, fake.cancel_calls, "cancel_stream should fire once after first ```ruby block")
+    assert_equal(3, fake.chunks_yielded, "no further chunks should be processed after cancel")
+  end
+
+  def test_engine_cancels_even_when_closing_fence_lacks_trailing_newline
+    # Some Apple FM outputs concatenate blocks without "\n" between close and
+    # next open (e.g. "```\n```ruby" instead of "```\n\n```ruby"). The cancel
+    # heuristic must trigger on the closing "\n```" regardless.
+    fake = FakeCancellableSession.new(chunks: [
+      "```ruby\n",
+      "fs.read \"./x\"\n",
+      "```",                   # closing fence WITHOUT trailing newline
+      "```ruby\n",              # next block starts immediately
+      "more\n",
+      "```\n",
+    ])
+    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
+      system_prompt: "system",
+      session_builder: ->(_) { fake },
+    )
+    engine.stream([{ role: "user", content: "hi" }]) { |_| }
+    assert_equal(1, fake.cancel_calls)
+    assert(fake.chunks_yielded <= 4, "cancel must fire by chunk 4 at the latest (got #{fake.chunks_yielded})")
   end
 
   def test_engine_passes_through_non_overflow_error

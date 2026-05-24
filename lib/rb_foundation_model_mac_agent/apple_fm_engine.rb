@@ -1,13 +1,15 @@
 # frozen_string_literal: true
 
 require "foundation_model_mac"
-require_relative "tool_call"
 require_relative "context_compactor"
 
 module RbFoundationModelMacAgent
   class AppleFmEngine
     MAX_RETRIES = 2
     STOP_FENCE = "\n```\n"
+    # Matches one complete fenced block of any language tag (```tool_call, ```ruby, ```python, ...).
+    # Cancels generation after the first block so Apple FM cannot runaway-concatenate blocks.
+    FENCE_BLOCK_RE = /```\w*\n.*?\n```/m
 
     def initialize(system_prompt:, session_builder: nil, **)
       @system_prompt = system_prompt
@@ -49,7 +51,7 @@ module RbFoundationModelMacAgent
       @session.stream_response(to: input, stop_at: [STOP_FENCE]) do |chunk|
         buf << chunk
         block.call(chunk) if block
-        if !cancelled && ToolCall::FENCE_RE.match?(buf)
+        if !cancelled && FENCE_BLOCK_RE.match?(buf)
           @session.cancel_stream
           cancelled = true
         end
