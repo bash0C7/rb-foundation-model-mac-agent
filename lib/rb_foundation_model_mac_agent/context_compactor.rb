@@ -20,10 +20,11 @@ module RbFoundationModelMacAgent
       # Stage 1: full render fits within budget
       return rendered.join("\n") if total_tokens(rendered) <= budget
 
-      # Stage 2: squeeze older entries, keep last entry full
-      last_idx = messages.length - 1
+      # Stage 2: keep last 3 entries (≈ recent pair user→assistant→tool_result) full,
+      # squeeze older ones
+      keep_full_from = [messages.length - 3, 0].max
       rendered = messages.each_with_index.map do |m, i|
-        i == last_idx ? render_full(m) : render_squeezed(m)
+        i >= keep_full_from ? render_full(m) : render_squeezed(m)
       end
       return rendered.join("\n") if total_tokens(rendered) <= budget
 

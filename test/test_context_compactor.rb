@@ -22,7 +22,7 @@ class TestContextCompactor < Test::Unit::TestCase
       { role: "assistant", content: "```tool_call\nname: fs.read\nargs:\n  path: ./now.rb\n```" },
       { role: "user", content: "```tool_result\nname: fs.read\nok: true\ncontent: #{long}\n```" },
     ]
-    out = C.compact(messages, system_prompt_size: 200, target_tokens: 1500)
+    out = C.compact(messages, system_prompt_size: 200, target_tokens: 1470)
     # last 3 entries kept full (not squeezed)
     assert_includes(out, "[recent context]", "index 2 (recent pair start) must be full")
     assert_includes(out, "./now.rb",         "index 3 (recent tool_call) must be full")
@@ -35,7 +35,7 @@ class TestContextCompactor < Test::Unit::TestCase
   def test_squeezes_only_entries_before_last_three
     messages = (0..6).map do |i|
       role = i.even? ? "user" : "assistant"
-      content = i < 4 ? "```tool_call\nname: fs.read\nargs:\n  path: ./f#{i}.rb\n```" : "msg #{i}"
+      content = i < 4 ? "```tool_call\nname: fs.read\nargs:\n  path: ./f#{i}.rb\n```" : "msg #{i} " * 27
       { role: role, content: content }
     end
     out = C.compact(messages, system_prompt_size: 200, target_tokens: 300)
@@ -66,7 +66,7 @@ class TestContextCompactor < Test::Unit::TestCase
   end
 
   def test_drops_oldest_turn_when_still_over_budget
-    messages = (1..10).map.with_index do |_, i|
+    messages = (1..10).map do |i|
       role = i.even? ? "user" : "assistant"
       { role: role, content: "turn #{i} " * 100 }
     end
