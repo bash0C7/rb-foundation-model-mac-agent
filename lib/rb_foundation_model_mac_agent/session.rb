@@ -77,30 +77,28 @@ module RbFoundationModelMacAgent
     def render_tools(agent_def, mcp_registry)
       lines = []
       agent_def[:allowed_builtin].each do |name|
-        lines << "- `#{name}` (built-in)"
+        lines << "- #{name}"
       end
       agent_def[:allowed_mcp].each do |srv|
         mcp_registry.tools(srv).each do |t|
-          lines << "- `#{srv}.#{t[:name]}` — #{t[:description]}"
+          lines << "- #{srv}.#{t[:name]} — #{t[:description]}"
         end
       end
       lines.empty? ? "(no tools available)" : lines.join("\n")
-    end
+end
 
     def tool_call_format_guide
       <<~GUIDE
-        To call a tool, emit a fenced block like:
-
+        Tool call format:
         ```tool_call
-        name: <namespace>.<tool>
+        name: <ns>.<tool>
         args:
           key: value
         ```
-
-        Emit at most one tool_call per turn. When you have the final answer,
-        respond without any tool_call block.
-        For fs.* tools, paths are resolved relative to your workspace root.
-        Absolute paths are also accepted as long as they fall inside the workspace.
+        Rules:
+        - Emit at most ONE tool_call per turn, then STOP generating.
+        - For final answer, omit any tool_call block.
+        - fs.* paths resolve to workspace root.
       GUIDE
     end
   end
