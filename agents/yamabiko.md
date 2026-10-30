@@ -9,6 +9,4 @@ scripted_replies:
   - "I read it. The class defined is Greeter."
 ---
 
-山彦エージェント。scripted_replies に従って自律 loop demo を行う LLM 不要の
-決定論的 agent。echo 単純動作 (1 reply 列で {input} 展開) は ScriptedEngine の
-unit test で確認しています。
+山彦エージェント。scripted_repliesに従って、fs.readを1回呼ぶ自律loopを再生する。LLMを使わない。
