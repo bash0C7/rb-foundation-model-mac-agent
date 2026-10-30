@@ -10,8 +10,6 @@ module RbFoundationModelMacAgent
   class Session
     attr_reader :messages, :system_prompt
 
-    # engine: keyword exists primarily for tests (inject ScriptedEngine).
-    # Production callers omit it and let the factory choose.
     def initialize(agent_def:, mcp_registry:, engine: nil)
       @agent_def     = agent_def
       @mcp_registry  = mcp_registry
@@ -19,7 +17,7 @@ module RbFoundationModelMacAgent
       @system_prompt = build_system_prompt(agent_def, mcp_registry)
       @engine        = engine || build_engine(agent_def, @system_prompt)
       @messages      = []
-      @preprocessor  = build_preprocessor(agent_def)
+      @preprocessor  = InputPreprocessor.new if agent_def[:preprocess_input] == "ja-en-roundtrip"
     end
 
     def turn(user_input, display:)
@@ -33,17 +31,11 @@ module RbFoundationModelMacAgent
       @messages << { role: "user", content: user_input }
       iters = @agent_def[:max_iters]
       iters.times do
-        assistant_text = stream_and_show(@messages, display)
-        @messages << { role: "assistant", content: assistant_text }
+        assistant_text = stream_and_show(display)
 
         call = ToolCall.parse(assistant_text)
-        if call.nil?
-          if @preprocessor && original_lang == "ja"
-            translated = @preprocessor.postprocess(assistant_text, original_lang: original_lang)
-            if translated != assistant_text
-              display.dialog(translated, style: :assistant)
-            end
-          end
+        unless call
+          show_translation(assistant_text, display) if original_lang == "ja"
           return
         end
 
@@ -69,17 +61,28 @@ module RbFoundationModelMacAgent
 
     private
 
-    def stream_and_show(messages, display)
+    def stream_and_show(display)
       buf = +""
       slot = display.open_live(style: :assistant)
-      @engine.stream(messages) { |chunk| buf << chunk; slot.update(buf) }
+      begin
+        @engine.stream(@messages) { |chunk| buf << chunk; slot.update(buf) }
+      rescue Interrupt
+        slot.commit
+        @messages << { role: "assistant", content: buf }
+        raise
+      rescue StandardError
+        slot.discard
+        @messages.pop
+        raise
+      end
       slot.commit
+      @messages << { role: "assistant", content: buf }
       buf
     end
 
-    def build_preprocessor(agent_def)
-      return nil unless agent_def[:preprocess_input] == "ja-en-roundtrip"
-      InputPreprocessor.new
+    def show_translation(text, display)
+      translated = @preprocessor.postprocess(text, original_lang: "ja")
+      display.dialog(translated, style: :assistant) if translated != text
     end
 
     def build_engine(agent_def, system_prompt)
@@ -97,17 +100,12 @@ module RbFoundationModelMacAgent
     end
 
     def render_tools(agent_def, mcp_registry)
-      lines = []
-      agent_def[:allowed_builtin].each do |name|
-        lines << "- #{name}"
-      end
+      lines = agent_def[:allowed_builtin].map { |name| "- #{name}" }
       agent_def[:allowed_mcp].each do |srv|
-        mcp_registry.tools(srv).each do |t|
-          lines << "- #{srv}.#{t[:name]} — #{t[:description]}"
-        end
+        mcp_registry.tools(srv).each { |t| lines << "- #{srv}.#{t[:name]} — #{t[:description]}" }
       end
       lines.empty? ? "(no tools available)" : lines.join("\n")
-end
+    end
 
     def tool_call_format_guide
       <<~GUIDE

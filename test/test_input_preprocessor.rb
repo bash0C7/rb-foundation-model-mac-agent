@@ -6,7 +6,6 @@ require "rb_foundation_model_mac_agent/input_preprocessor"
 class TestInputPreprocessor < Test::Unit::TestCase
   P = RbFoundationModelMacAgent::InputPreprocessor
 
-  # --- mocks ---
   module FakeNL
     def self.detect_language(s)
       s.match?(/\p{Hiragana}|\p{Katakana}|\p{Han}/) ? "ja" : "en"
@@ -45,7 +44,6 @@ class TestInputPreprocessor < Test::Unit::TestCase
   def test_code_fence_is_masked_and_restored
     raw = "次のコードを実行して: ```ruby\nputs 1\n``` どうなる？"
     result = @pre.preprocess(raw)
-    # masked code fence should appear in final text untouched
     assert_includes(result[:text], "```ruby\nputs 1\n```")
   end
 
@@ -80,8 +78,32 @@ class TestInputPreprocessor < Test::Unit::TestCase
     pre = P.new(nl_module: FakeNL, translation_module: failing)
     result = pre.preprocess("こんにちは")
     assert_equal("こんにちは", result[:text])
-    # original_lang preserved so postprocess still decides correctly (but will also fail-fallback)
     assert_equal("ja", result[:original_lang])
+  end
+
+  def test_code_with_backslashes_is_restored_verbatim
+    code = "```ruby\nputs 'a\\0b'.gsub(/a/, '\\\\&')\n```"
+    out = @pre.postprocess("Use this: #{code}", original_lang: "ja")
+    assert_includes(out, code)
+  end
+
+  def test_unmask_restores_remaining_placeholders_after_a_mangled_one
+    dropping = Module.new do
+      def self.translate(text, from:, to:)
+        TestInputPreprocessor::FakeTrans::Result.new(true, text.sub(/Xxyzzyx0xzzyxX/, ""), nil)
+      end
+    end
+    pre = P.new(nl_module: FakeNL, translation_module: dropping)
+    stderr = $stderr
+    $stderr = StringIO.new
+    begin
+      out = pre.postprocess("`a` と `b`", original_lang: "ja")
+      assert_match(/placeholder Xxyzzyx0xzzyxX mangled/, $stderr.string)
+    ensure
+      $stderr = stderr
+    end
+    assert_includes(out, "`b`")
+    assert_not_match(/Xxyzzyx\d+xzzyxX/, out)
   end
 
   def test_unknown_language_defaults_to_en_no_translation

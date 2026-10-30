@@ -1,0 +1,320 @@
+module RbFoundationModelMacAgent
+  # The gem version.
+  VERSION: String
+
+  # An agent definition loaded from a Markdown file with YAML frontmatter.
+  # Keys: :name, :engine, :model, :fs_root, :allowed_mcp, :allowed_builtin, :max_iters, :scripted_replies, :body,
+  # and :preprocess_input when the frontmatter sets it.
+  type agent_def = Hash[Symbol, untyped]
+
+  # One conversation entry. :role is "user" or "assistant"; tool results are sent back as "user" entries.
+  type message = { role: String, content: String }
+
+  # A chat backend. #stream sends the conversation and yields the reply in chunks.
+  interface _Engine
+    def stream: (Array[message] messages) { (String chunk) -> void } -> untyped
+    def reset: () -> void
+    def close: () -> void
+  end
+
+  # The output surface Session writes to. Baslash::SyncCtx::DisplayProxy implements it.
+  interface _Display
+    def dialog: (String content, ?style: Symbol?) -> void
+    def open_live: (?style: Symbol?) -> _LiveSlot
+  end
+
+  # A display region that shows the reply while it streams.
+  interface _LiveSlot
+    def update: (String text) -> void
+    def commit: (?String? final) -> void
+    def discard: () -> void
+  end
+
+  # Loads agent definitions from the gem's agents/ directory and the project's .rb-foundation-model-mac-agent/agents/ directory.
+  # A project definition wins over a gem definition with the same name.
+  module AgentDef
+    # Values used when the frontmatter omits a key.
+    DEFAULTS: Hash[Symbol, untyped]
+
+    # Splits a file into frontmatter and body.
+    FRONTMATTER_RE: Regexp
+
+    # Loads the agent +name+. Raises RuntimeError when it is not found, lacks frontmatter, or names an unknown engine.
+    def self?.load: (String name, gem_agents_dir: String?, project_agents_dir: String?) -> agent_def
+
+    # Returns the sorted, deduplicated agent names found in both directories.
+    def self?.list: (gem_agents_dir: String?, project_agents_dir: String?) -> Array[String]
+
+    # Returns the path of the agent file, preferring the project directory, or nil.
+    def self?.resolve_path: (String name, String? gem_dir, String? project_dir) -> String?
+
+    def self?.parse_file: (String path) -> agent_def
+
+    def self?.validate!: (Hash[String, untyped] fm, String path) -> void
+  end
+
+  # Runs the conversation loop: sends user input to the engine, executes the tool call the reply contains,
+  # feeds the tool result back, and repeats until a reply has no tool call or max_iters is reached.
+  #
+  # #messages mirrors the engine's history. A turn that fails with a StandardError drops its pending prompt and re-raises,
+  # matching AppleFoundationModel, which keeps no trace of a failed request.
+  # A turn stopped by Interrupt records the partial reply and re-raises, matching AppleFoundationModel, which keeps a stopped reply.
+  class Session
+    attr_reader messages: Array[message]
+    attr_reader system_prompt: String
+
+    # +engine+ overrides the engine that agent_def[:engine] selects.
+    def initialize: (agent_def: agent_def, mcp_registry: McpRegistry, ?engine: _Engine?) -> void
+
+    # Runs one user turn. When agent_def[:preprocess_input] is "ja-en-roundtrip", Japanese input is translated to English
+    # before it is sent and the final reply is shown again translated to Japanese.
+    def turn: (String user_input, display: _Display) -> void
+
+    # Clears the history and resets the engine.
+    def reset: () -> void
+
+    def close: () -> void
+
+    private
+
+    def stream_and_show: (_Display display) -> String
+
+    def show_translation: (String text, _Display display) -> void
+
+    def build_engine: (agent_def agent_def, String system_prompt) -> _Engine
+
+    def build_system_prompt: (agent_def agent_def, McpRegistry mcp_registry) -> String
+
+    def render_tools: (agent_def agent_def, McpRegistry mcp_registry) -> String
+
+    def tool_call_format_guide: () -> String
+  end
+
+  # Engine backed by AppleFoundationModel::Session. The on-device session keeps the transcript, so only the last message is sent.
+  #
+  # The stream stops after the first complete fenced block or once the reply exceeds MAX_STREAM_BYTES.
+  # When generation fails because the content exceeds the context window, the engine opens a new session and sends the history compacted
+  # by ContextCompactor, halving the token budget on each of up to MAX_RETRIES retries.
+  class AppleFmEngine
+    MAX_RETRIES: Integer
+    COMPACTION_TARGET_TOKENS: Integer
+    STOP_FENCE: String
+    MAX_STREAM_BYTES: Integer
+    FENCE_BLOCK_RE: Regexp
+
+
+    # +session_builder+ receives the system prompt and returns a session; it defaults to AppleFoundationModel::Session.new.
+    # Raises AppleFoundationModel::UnavailableError when Apple Intelligence is unavailable.
+    def initialize: (system_prompt: String, ?session_builder: (^(String) -> untyped)?, **untyped) -> void
+
+    # Returns the text yielded from the final attempt. Raises AppleFoundationModel::GenerationError when generation fails
+    # for another reason or the context still overflows after MAX_RETRIES retries.
+    def stream: (Array[message] messages) ?{ (String chunk) -> void } -> String
+
+    # Closes the session and opens a new one with the same system prompt.
+    def reset: () -> void
+
+    def close: () -> void
+
+    private
+
+    def stream_once: (String input) ?{ (String chunk) -> void } -> String
+
+    def context_overflow?: (StandardError e) -> bool
+
+    def compact_into_new_session: (Array[message] messages, Integer target_tokens) -> String
+  end
+
+  # Engine backed by the Ollama chat API at OLLAMA_HOST (default http://localhost:11434). Sends the whole history on every call.
+  class OllamaEngine
+    def initialize: (model: String, system_prompt: String, ?host: String) -> void
+
+    # Raises RuntimeError when the server answers with a status other than 200.
+    def stream: (Array[message] messages) { (String chunk) -> void } -> untyped
+
+    def reset: () -> void
+
+    def close: () -> void
+  end
+
+  # Deterministic engine that yields the configured replies in order. "{input}" in a reply is replaced with the last message.
+  class ScriptedEngine
+    def initialize: (replies: Array[String], **untyped) -> void
+
+    # Raises RuntimeError when the replies are exhausted.
+    def stream: (Array[message] messages) { (String chunk) -> void } -> untyped
+
+    # Restarts from the first reply.
+    def reset: () -> void
+
+    def close: () -> void
+  end
+
+  # Renders a conversation as a single prompt that fits a token budget, estimating 3 bytes per token.
+  # Older entries are squeezed first (tool calls to one line, tool results to their head and tail), the last KEEP_FULL entries
+  # stay intact, then the oldest entries are dropped, and finally the one remaining entry is truncated.
+  module ContextCompactor
+    HEAD_LINES: Integer
+    TAIL_LINES: Integer
+    KEEP_FULL: Integer
+
+    def self?.compact: (Array[message] messages, system_prompt_size: Integer, target_tokens: Integer) -> String
+
+    def self?.truncate_bytes: (String text, Integer max_bytes) -> String
+
+    def self?.render_full: (message msg) -> String
+
+    def self?.render_squeezed: (message msg) -> String
+
+    def self?.rough_tokens: (String? text) -> Integer
+
+    def self?.total_tokens: (Array[String] rendered) -> Integer
+  end
+
+  # Parses and runs tool calls written as a fenced YAML block with a "name: <ns>.<tool>" key and an optional "args:" mapping.
+  module ToolCall
+    FENCE_RE: Regexp
+    BANNER_RE: Regexp
+    NAME_RE: Regexp
+
+    # Returns the first fenced block of any language tag that parses as a tool call, or nil.
+    def self?.parse: (String? text) -> Hash[String, untyped]?
+
+    # Runs the call when the agent allows it. "fs.*" goes to FsTool and "<server>.*" to the MCP registry.
+    # Returns { ok: true, content: } or { ok: false, error: } and never raises StandardError.
+    def self?.dispatch: (Hash[String, untyped] call, agent_def: agent_def, fs_root: String, mcp_registry: McpRegistry?) -> Hash[Symbol, untyped]
+
+    # Renders the result as a ```tool_result fenced YAML block.
+    def self?.render_result: (String name, Hash[Symbol, untyped] result) -> String
+
+    def self?.safe_yaml_load: (String body) -> untyped
+  end
+
+  # The fs.read and fs.write tools. Paths are relative to +fs_root+ or absolute, and must resolve inside +fs_root+
+  # after following symlinks; otherwise RuntimeError "path outside fs_root" is raised.
+  module FsTool
+    def self?.read: (path: String, fs_root: String) -> String
+
+    # Creates missing parent directories and returns a "wrote N bytes to PATH" summary.
+    def self?.write: (path: String, content: String, fs_root: String) -> String
+
+    # Returns the resolved absolute path.
+    def self?.ensure_inside: (String path, String fs_root) -> String
+
+    def self?.inside?: (String abs, String root) -> bool
+
+    def self?.nearest_existing_parent: (String path) -> String
+  end
+
+  # Detects Japanese input with NaturalLanguageMac and translates it with TranslationMac, masking code fences and
+  # backtick spans so they pass through unchanged. Translation failures warn and fall back to the untranslated text.
+  class InputPreprocessor
+    PLACEHOLDER_PREFIX: String
+    PLACEHOLDER_SUFFIX: String
+
+    # The modules default to NaturalLanguageMac and TranslationMac.
+    def initialize: (?nl_module: untyped, ?translation_module: untyped) -> void
+
+    # Returns { text:, original_lang: } where original_lang is "ja" or "en". Japanese text is translated to English.
+    def preprocess: (String text) -> { text: String, original_lang: String }
+
+    # Translates +text+ back to Japanese when +original_lang+ is "ja"; returns it unchanged otherwise.
+    def postprocess: (String text, original_lang: String) -> String
+
+    def mask: (String text) -> [String, Array[[String, String]]]
+
+    # Restores every placeholder found in +text+ and warns about each one the translation lost.
+    def unmask: (String text, Array[[String, String]] placeholders) -> String
+
+    private
+
+    def detect_language_safe: (String text) -> String
+
+    def translate_safe: (String text, from: String, to: String) -> Hash[Symbol, untyped]
+
+    def default_nl: () -> untyped
+
+    def default_translation: () -> untyped
+  end
+
+  # MCP servers configured in a project's mcp.json. Connects to each server on creation and caches its tool list.
+  # A server that fails to connect stays listed with status :error and its spawned process is stopped.
+  class McpRegistry
+    GIT_HOSTS: Array[String]
+
+    def initialize: (config_path: String) -> void
+
+    # Returns one { name:, source:, kind:, status:, tool_count:, error: } entry per server.
+    def list: () -> Array[Hash[Symbol, untyped]]
+
+    # Returns the cached { name:, description:, input_schema: } tools of +server+, or [] for an unknown server.
+    def tools: (String server) -> Array[Hash[Symbol, untyped]]
+
+    # Calls +tool+ and returns its text content joined by newlines.
+    # Raises RuntimeError when the server is unknown or not connected, or the tool reports an error.
+    def call: (server: String, tool: String, args: Hash[String, untyped]) -> String
+
+    # Connects a server and saves it to mcp.json. +source+ alone is classified by SourceDetector; +opts+ gives
+    # kind: "stdio" with cmd:, args:, env:, or kind: "http" with headers:.
+    # Replaces and disconnects a server with the same name. Raises RuntimeError and saves nothing when the connection fails.
+    def add: (String name, ?String? source, **untyped opts) -> void
+
+    # Disconnects the server and removes it from mcp.json. Raises RuntimeError for an unknown name.
+    def remove: (String name) -> void
+
+    # Disconnects every server.
+    def close_all: () -> void
+
+    private
+
+    def disconnect: (Hash[Symbol, untyped]? entry) -> void
+
+    def load_and_connect_all: () -> void
+
+    def read_config: () -> Hash[String, untyped]
+
+    def save_config: () -> void
+
+    def connect_one: (String name, Hash[Symbol, untyped] cfg) -> Hash[Symbol, untyped]
+
+    def build_transport: (Hash[Symbol, untyped] cfg) -> untyped
+
+    # Classifies an /mcp add SOURCE as "git", "http", or "filepath", and resolves a local directory to a launch command
+    # from its package.json and package-lock.json, pyproject.toml, or Gemfile and gemspec.
+    module SourceDetector
+      def self?.classify: (String? source) -> String
+
+      def self?.git_repo?: (String s) -> bool
+
+      def self?.http_endpoint?: (String s) -> bool
+
+      def self?.filepath?: (String s) -> bool
+
+      def self?.http_like?: (String s) -> bool
+
+      # Returns [command, args, env]. Raises RuntimeError for git sources, which are not supported.
+      def self?.resolve: (kind: String, source: String) -> [String, Array[String], Hash[String, String]?]
+
+      def self?.resolve_filepath: (String path) -> [String, Array[String], Hash[String, String]?]
+    end
+  end
+
+  # The rb-foundation-model-mac-agent command. Creates .rb-foundation-model-mac-agent/ with agents/ and mcp.json in the
+  # current directory, then starts a baslash REPL with /agents, /tools, /mcp, /reset, and /dump.
+  module CLI
+    DEFAULT_AGENT: String
+    PROJECT_DIR_NAME: String
+    GEM_AGENTS_DIR: String
+
+    # The running Session. baslash makes the on_submit block Ractor-shareable, so the block reaches the session
+    # through this module attribute instead of a captured local.
+    attr_accessor self.current_session: Session?
+
+    # Runs the agent named by argv.first, defaulting to DEFAULT_AGENT.
+    def self?.run: (Array[String] argv) -> void
+
+    def self?.ensure_project_dir: (String cwd) -> String
+
+    def self?.start_shell: (agent_def: agent_def, registry: McpRegistry, session: Session, project_agents: String) -> void
+  end
+end

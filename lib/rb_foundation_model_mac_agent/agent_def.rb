@@ -17,17 +17,12 @@ module RbFoundationModelMacAgent
 
     module_function
 
-    # Returns a Hash with keys :name :engine :model :fs_root :allowed_mcp
-    # :allowed_builtin :max_iters :body. Project-local definitions win when
-    # the same name exists in both dirs.
     def load(name, gem_agents_dir:, project_agents_dir:)
       path = resolve_path(name, gem_agents_dir, project_agents_dir)
       raise "agent '#{name}' not found in #{project_agents_dir} or #{gem_agents_dir}" unless path
       parse_file(path)
     end
 
-    # Returns the list of agent names available across both dirs, deduped
-    # (project local wins on dup).
     def list(gem_agents_dir:, project_agents_dir:)
       names = []
       [gem_agents_dir, project_agents_dir].each do |dir|

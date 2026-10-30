@@ -6,19 +6,15 @@ require "fileutils"
 require "mcp"
 
 module RbFoundationModelMacAgent
-  # In-process registry of MCP servers configured via mcp.json (project-local).
-  # Connects on startup, caches the tool list per server, and routes #call to
-  # the right transport. Add/remove operations rewrite mcp.json atomically.
   class McpRegistry
     GIT_HOSTS = %w[github.com gitlab.com bitbucket.org codeberg.org].freeze
 
     def initialize(config_path:)
       @config_path = config_path
-      @entries = {} # name => { client:, tools:, status:, source:, kind:, cmd:, args:, env:, headers:, error: }
+      @entries = {}
       load_and_connect_all
     end
 
-    # Returns Array of { name:, source:, kind:, status:, tool_count:, error: }
     def list
       @entries.map do |name, e|
         { name: name, source: e[:source], kind: e[:kind],
@@ -26,53 +22,48 @@ module RbFoundationModelMacAgent
       end
     end
 
-    # Returns Array of { name:, description:, input_schema: } for the cached
-    # tool list of `server`. Empty array if server is errored or unknown.
     def tools(server)
-      e = @entries[server]
-      return [] unless e
-      e[:tools]
+      @entries.fetch(server, { tools: [] })[:tools]
     end
 
     def call(server:, tool:, args:)
       e = @entries.fetch(server) { raise "unknown MCP server: #{server}" }
       raise "MCP server '#{server}' is not connected (#{e[:error]})" unless e[:status] == :ok
-      response = e[:client].call_tool(name: tool, arguments: args)
-      contents = response.dig("result", "content") || []
-      contents.filter_map { |c| c["text"] if c["type"] == "text" }.join("\n")
+      result = e[:client].call_tool(name: tool, arguments: args).fetch("result", {})
+      text = (result["content"] || []).filter_map { |c| c["text"] if c["type"] == "text" }.join("\n")
+      raise "MCP tool #{server}.#{tool} failed: #{text}" if result["isError"]
+      text
     end
 
-    # Two call styles:
-    #   add(name, "https://github.com/foo/bar")   # /mcp add NAME SOURCE — kind auto-classified
-    #   add(name, kind: "stdio", cmd: ..., args: ...) # explicit transport spec
-    # Rejects (does not persist) on connect failure.
     def add(name, source = nil, **opts)
       kind = (opts.delete(:kind) || SourceDetector.classify(source)).to_s
       cfg  = { kind: kind, source: source }.merge(opts).compact
       entry = connect_one(name, cfg)
-      raise entry[:error] || "connect failed" unless entry[:status] == :ok
+      raise entry[:error] unless entry[:status] == :ok
+      disconnect(@entries[name])
       @entries[name] = entry
       save_config
     end
 
     def remove(name)
-      e = @entries.delete(name)
-      e[:client].transport.close if e && e[:client] && e[:client].transport
+      e = @entries.delete(name) { raise "unknown MCP server: #{name}" }
+      disconnect(e)
       save_config
     end
 
     def close_all
-      @entries.each_value do |e|
-        e[:client].transport.close if e[:client] && e[:client].transport
-      end
+      @entries.each_value { |e| disconnect(e) }
     end
 
     private
 
+    def disconnect(entry)
+      entry&.dig(:client)&.transport&.close
+    end
+
     def load_and_connect_all
-      cfg = read_config
-      cfg.fetch("servers", {}).each do |name, raw|
-        @entries[name] = connect_one(name, symbolize(raw))
+      read_config.fetch("servers", {}).each do |name, raw|
+        @entries[name] = connect_one(name, raw.transform_keys(&:to_sym))
       end
     end
 
@@ -84,13 +75,8 @@ module RbFoundationModelMacAgent
     def save_config
       FileUtils.mkdir_p(File.dirname(@config_path))
       servers = @entries.transform_values do |e|
-        h = { "kind" => e[:kind].to_s }
-        h["source"]  = e[:source]  if e[:source]
-        h["cmd"]     = e[:cmd]     if e[:cmd]
-        h["args"]    = e[:args]    if e[:args]
-        h["env"]     = e[:env]     if e[:env]
-        h["headers"] = e[:headers] if e[:headers]
-        h.compact
+        { "kind" => e[:kind].to_s, "source" => e[:source], "cmd" => e[:cmd],
+          "args" => e[:args], "env" => e[:env], "headers" => e[:headers] }.compact
       end
       File.write(@config_path, JSON.pretty_generate("servers" => servers))
     end
@@ -102,6 +88,7 @@ module RbFoundationModelMacAgent
       tools = client.tools.map { |t| { name: t.name, description: t.description, input_schema: t.input_schema } }
       cfg.merge(client: client, tools: tools, status: :ok)
     rescue StandardError => e
+      transport&.close
       warn "[mcp] connect failed: #{name}: #{e.message}"
       cfg.merge(client: nil, tools: [], status: :error, error: e.message)
     end
@@ -120,13 +107,6 @@ module RbFoundationModelMacAgent
       end
     end
 
-    def symbolize(h)
-      h.each_with_object({}) { |(k, v), o| o[k.to_sym] = v }
-    end
-
-    # Inlined detector: classifies a SOURCE string into a transport kind and
-    # resolves git/filepath sources to a launch command. Split into its own
-    # file if this grows past ~50 LOC (per spec).
     module SourceDetector
       module_function
 
@@ -142,8 +122,7 @@ module RbFoundationModelMacAgent
       def git_repo?(s)
         return true if s.start_with?("git@")
         return true if s.end_with?(".git")
-        return true if http_like?(s) && McpRegistry::GIT_HOSTS.include?(URI.parse(s).host)
-        false
+        http_like?(s) && McpRegistry::GIT_HOSTS.include?(URI.parse(s).host)
       rescue URI::InvalidURIError
         false
       end
@@ -155,22 +134,19 @@ module RbFoundationModelMacAgent
       end
 
       def filepath?(s)
-        File.directory?(s) || File.directory?(File.expand_path(s))
+        File.directory?(File.expand_path(s))
       end
 
       def http_like?(s)
         s.start_with?("http://", "https://")
       end
 
-      # Resolves a git/filepath source to [cmd, args, env]. For MVP we support
-      # filepath only (node / python / ruby auto-detection); git requires
-      # clone-to-tmp which we defer.
       def resolve(kind:, source:)
         case kind
         when "filepath"
           resolve_filepath(File.expand_path(source))
         when "git"
-          raise "git MCP sources not yet supported in MVP — clone manually and use kind:filepath"
+          raise "git MCP sources are not supported; clone the repository and add its local directory"
         end
       end
 

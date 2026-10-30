@@ -4,9 +4,6 @@ require "test/unit"
 require "stringio"
 require "rb_foundation_model_mac_agent"
 
-# Drives Session in tests by yielding a pre-canned sequence of assistant
-# strings (one per Session#turn iteration). Captures every messages array
-# it was called with so tests can assert ReAct history shaping.
 class SpyScriptedEngine < RbFoundationModelMacAgent::ScriptedEngine
   attr_reader :calls, :reset_count
 
@@ -27,10 +24,8 @@ class SpyScriptedEngine < RbFoundationModelMacAgent::ScriptedEngine
   end
 end
 
-# Backwards-compat alias for any test still saying `ScriptedEngine.new(...)`.
 ScriptedEngine = SpyScriptedEngine
 
-# Capture-only stand-in for the baslash display surface.
 class FakeDisplay
   attr_reader :appended, :dialogs
 
