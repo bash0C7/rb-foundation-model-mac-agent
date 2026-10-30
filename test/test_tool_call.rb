@@ -82,10 +82,8 @@ class TestToolCall < Test::Unit::TestCase
     assert_match(/mcp 'evil' not allowed/, result[:error])
   end
 
-  # --- parser tolerance (any-language fence) ---
 
   def test_parse_extracts_tool_call_from_ruby_flavored_fence
-    # Apple FM commonly wraps tool_call in ```ruby instead of ```tool_call
     text = <<~TXT
       Sure, I will read the file.
       ```ruby
@@ -101,7 +99,6 @@ class TestToolCall < Test::Unit::TestCase
   end
 
   def test_parse_extracts_tool_call_with_tool_call_banner_inside_fence
-    # Apple FM sometimes inserts literal "tool_call" as the first line inside fence
     text = <<~TXT
       ```ruby
       tool_call

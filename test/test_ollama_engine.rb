@@ -2,9 +2,11 @@
 
 require_relative "test_helper"
 require "json"
-require "webmock/test_unit"
+require "webmock"
 
 class TestOllamaEngine < Test::Unit::TestCase
+  include WebMock::API
+
   def setup
     WebMock.enable!
     WebMock.disable_net_connect!

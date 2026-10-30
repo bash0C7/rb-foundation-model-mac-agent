@@ -4,74 +4,96 @@ require_relative "test_helper"
 
 class TestAppleFmEngine < Test::Unit::TestCase
   def setup
-    @session = RbFoundationModelMacAgent::AppleFmEngine.new(system_prompt: "You answer in one word.")
+    @engine = RbFoundationModelMacAgent::AppleFmEngine.new(system_prompt: "You answer in one short sentence.")
   rescue AppleFoundationModel::UnavailableError => e
     omit "Apple Intelligence not available: #{e.message}"
   end
 
   def teardown
-    @session&.close
+    @engine&.close
   end
 
-  def test_stream_yields_chunks_from_apple_fm
+  def test_stream_yields_chunks_and_returns_their_concatenation
+    chunks = []
+    result = @engine.stream([{ role: "user", content: "Say hello." }]) { |c| chunks << c }
+    assert_false(chunks.empty?)
+    assert_equal(chunks.join, result)
+    assert_equal(Encoding::UTF_8, result.encoding)
+  end
+
+  def test_reset_keeps_engine_usable
+    @engine.stream([{ role: "user", content: "Remember the number 42." }]) { |_| }
+    @engine.reset
     out = +""
-    @session.stream([{ role: "user", content: "Say hello." }]) { |c| out << c }
+    @engine.stream([{ role: "user", content: "Say OK." }]) { |c| out << c }
     assert_false(out.empty?)
   end
 
-  def test_reset_recreates_underlying_session
-    out1 = +""
-    @session.stream([{ role: "user", content: "Hi. Remember the number 42." }]) { |c| out1 << c }
-    @session.reset
-    out2 = +""
-    @session.stream([{ role: "user", content: "What number did I say earlier?" }]) { |c| out2 << c }
-    # After reset the model should not remember 42 — the test is fuzzy but if reset
-    # really rebuilt the session, "42" shouldn't appear in out2 (or appears only
-    # because the model guessed it). We assert weakly: just that reset doesn't crash
-    # and stream still works.
-    assert_false(out2.empty?)
+  def test_next_prompt_runs_right_after_a_fence_cancel
+    first = @engine.stream([{ role: "user", content: "Write a Ruby hello world program in a fenced code block, then explain it in detail." }]) { |_| }
+    block = first.match(RbFoundationModelMacAgent::AppleFmEngine::FENCE_BLOCK_RE)
+    assert_not_nil(block, first)
+    assert_operator(block.post_match.length, :<, 40, "stream must stop at the closing fence, got #{block.post_match.inspect}")
+    second = +""
+    @engine.stream([{ role: "user", content: "Say OK." }]) { |c| second << c }
+    assert_false(second.empty?)
+  end
+
+  def test_recovers_from_real_context_overflow
+    builds = 0
+    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
+      system_prompt: "You answer in one short sentence.",
+      session_builder: ->(instr) { builds += 1; AppleFoundationModel::Session.new(instructions: instr) },
+    )
+    long = "Ruby is a dynamic programming language with a focus on simplicity. " * 1000
+    messages = [{ role: "user", content: "Summarize the following text in one sentence.\n#{long}" }]
+    out = +""
+    engine.stream(messages) { |c| out << c }
+    assert_operator(builds, :>=, 2, "the overflow must trigger a compacted retry on a new session")
+    assert_false(out.empty?)
+  ensure
+    engine&.close
   end
 end
 
-# --- recovery tests ---
-
 class FakeOverflowSession
-  attr_reader :stream_calls, :close_calls
+  attr_reader :inputs, :close_calls
+
   def initialize(behaviors:)
     @behaviors = behaviors.dup
-    @stream_calls = 0
+    @inputs = []
     @close_calls = 0
-    @cancel_calls = 0
   end
+
   def stream_response(to:, stop_at: nil)
-    @stream_calls += 1
+    @inputs << to
     behavior = @behaviors.shift
     raise "no behavior" unless behavior
-    case behavior[:type]
-    when :overflow
+    if behavior[:type] == :overflow
       raise AppleFoundationModel::GenerationError,
-            "exceededContextWindowSize: Content contains 4090 tokens, which exceeds the maximum allowed context size of 4096."
-    when :stream
-      behavior[:chunks].each { |c| yield c }
-      behavior[:chunks].join
+            "Content contains 12069 tokens, which exceeds the maximum allowed context size of 8192."
     end
+    behavior[:chunks].each { |c| yield c }
+    behavior[:chunks].join
   end
+
   def close
     @close_calls += 1
   end
-  def cancel_stream; @cancel_calls += 1; end
+
+  def cancel_stream; end
 end
 
-# Honors cancel_stream by breaking the chunk loop on the next iteration,
-# mirroring how the real Apple FM Swift task observes Task.isCancelled.
 class FakeCancellableSession
   attr_reader :cancel_calls, :chunks_yielded
+
   def initialize(chunks:)
     @chunks = chunks
     @cancel_calls = 0
     @chunks_yielded = 0
     @cancelled = false
   end
+
   def stream_response(to:, stop_at: nil)
     out = +""
     @chunks.each do |c|
@@ -82,44 +104,50 @@ class FakeCancellableSession
     end
     out
   end
+
   def cancel_stream
     @cancel_calls += 1
     @cancelled = true
   end
+
   def close; end
 end
 
 class TestAppleFmEngineRecovery < Test::Unit::TestCase
+  def engine_with(fake)
+    RbFoundationModelMacAgent::AppleFmEngine.new(system_prompt: "system", session_builder: ->(_) { fake })
+  end
+
   def test_engine_retries_once_on_overflow
     fake = FakeOverflowSession.new(behaviors: [
       { type: :overflow },
       { type: :stream, chunks: ["recovered", " ", "output"] },
     ])
-    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
-      system_prompt: "system",
-      session_builder: ->(_) { fake },
-    )
-    chunks = []
-    result = engine.stream([{ role: "user", content: "hello" }]) { |c| chunks << c }
+    result = engine_with(fake).stream([{ role: "user", content: "hello" }]) { |_| }
     assert_equal("recovered output", result)
-    assert_equal(2, fake.stream_calls)
-    assert(fake.close_calls >= 1, "old session should be closed before rebuild")
+    assert_equal(2, fake.inputs.size)
+    assert_equal(1, fake.close_calls, "old session should be closed before rebuild")
   end
 
   def test_engine_raises_after_max_retries
+    fake = FakeOverflowSession.new(behaviors: Array.new(3) { { type: :overflow } })
+    assert_raise(AppleFoundationModel::GenerationError) do
+      engine_with(fake).stream([{ role: "user", content: "hello" }]) { |_| }
+    end
+    assert_equal(3, fake.inputs.size)
+  end
+
+  def test_each_retry_compacts_to_a_smaller_input
     fake = FakeOverflowSession.new(behaviors: [
       { type: :overflow },
       { type: :overflow },
-      { type: :overflow },
+      { type: :stream, chunks: ["ok"] },
     ])
-    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
-      system_prompt: "system",
-      session_builder: ->(_) { fake },
-    )
-    assert_raise(AppleFoundationModel::GenerationError) do
-      engine.stream([{ role: "user", content: "hello" }]) { |_| }
-    end
-    assert_equal(3, fake.stream_calls)  # initial + 2 retries
+    messages = [{ role: "user", content: "x" * 30_000 }]
+    engine_with(fake).stream(messages) { |_| }
+    first_retry, second_retry = fake.inputs[1], fake.inputs[2]
+    assert_operator(first_retry.bytesize, :<, 30_000)
+    assert_operator(second_retry.bytesize, :<, first_retry.bytesize)
   end
 
   def test_engine_cancels_after_first_complete_tool_call_block
@@ -127,83 +155,50 @@ class TestAppleFmEngineRecovery < Test::Unit::TestCase
       "```tool_call\n",
       "name: fs.read\n",
       "args:\n  key: ./sample.rb\n",
-      "```\n",                 # closing fence — cancel should fire here
-      "```tool_call\n",         # never reached
+      "```\n",
+      "```tool_call\n",
       "name: fs.write\n",
       "```\n",
     ])
-    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
-      system_prompt: "system",
-      session_builder: ->(_) { fake },
-    )
-    engine.stream([{ role: "user", content: "hi" }]) { |_| }
-    assert_equal(1, fake.cancel_calls, "cancel_stream should fire once after first tool_call block")
-    assert_equal(4, fake.chunks_yielded, "no further chunks should be processed after cancel")
+    engine_with(fake).stream([{ role: "user", content: "hi" }]) { |_| }
+    assert_equal(1, fake.cancel_calls)
+    assert_equal(4, fake.chunks_yielded)
   end
 
   def test_engine_cancels_after_first_complete_fenced_block_of_any_language
-    # Reproduces the L3 ```ruby flavor hang: Apple FM emits a ruby code block
-    # back-to-back. Engine must cancel after the first block even though the
-    # language tag is not "tool_call".
     fake = FakeCancellableSession.new(chunks: [
       "```ruby\n",
       "fs.read \"./sample.rb\"\n",
-      "```\n",                  # closing fence — cancel should fire here
-      "```ruby\n",               # never reached
+      "```\n",
+      "```ruby\n",
       "fs.read \"./sample.rb\"\n",
       "```\n",
     ])
-    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
-      system_prompt: "system",
-      session_builder: ->(_) { fake },
-    )
-    engine.stream([{ role: "user", content: "hi" }]) { |_| }
-    assert_equal(1, fake.cancel_calls, "cancel_stream should fire once after first ```ruby block")
-    assert_equal(3, fake.chunks_yielded, "no further chunks should be processed after cancel")
+    engine_with(fake).stream([{ role: "user", content: "hi" }]) { |_| }
+    assert_equal(1, fake.cancel_calls)
+    assert_equal(3, fake.chunks_yielded)
   end
 
   def test_engine_cancels_even_when_closing_fence_lacks_trailing_newline
-    # Some Apple FM outputs concatenate blocks without "\n" between close and
-    # next open (e.g. "```\n```ruby" instead of "```\n\n```ruby"). The cancel
-    # heuristic must trigger on the closing "\n```" regardless.
     fake = FakeCancellableSession.new(chunks: [
       "```ruby\n",
       "fs.read \"./x\"\n",
-      "```",                   # closing fence WITHOUT trailing newline
-      "```ruby\n",              # next block starts immediately
+      "```",
+      "```ruby\n",
       "more\n",
       "```\n",
     ])
-    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
-      system_prompt: "system",
-      session_builder: ->(_) { fake },
-    )
-    engine.stream([{ role: "user", content: "hi" }]) { |_| }
+    engine_with(fake).stream([{ role: "user", content: "hi" }]) { |_| }
     assert_equal(1, fake.cancel_calls)
-    assert(fake.chunks_yielded <= 4, "cancel must fire by chunk 4 at the latest (got #{fake.chunks_yielded})")
+    assert_operator(fake.chunks_yielded, :<=, 4)
   end
 
   def test_engine_cancels_when_buffer_exceeds_max_stream_bytes
-    # Reproduces the L3 'open fence never closes' runaway: model emits many chunks
-    # of Ruby code inside an unclosed ```ruby fence. FENCE_BLOCK_RE cannot fire
-    # because there is no closing fence; MAX_STREAM_BYTES is the hard safety net.
-    big_chunk = "x" * 1024  # 4 chunks * 1024 = 4096 bytes triggers cancel on chunk 5
-    fake = FakeCancellableSession.new(chunks: [
-      "```ruby\n",
-      big_chunk,
-      big_chunk,
-      big_chunk,
-      big_chunk,  # by here cumulative > MAX_STREAM_BYTES → cancel
-      "more never reached\n",
-      "```\n",
-    ])
-    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
-      system_prompt: "system",
-      session_builder: ->(_) { fake },
-    )
-    engine.stream([{ role: "user", content: "hi" }]) { |_| }
-    assert_equal(1, fake.cancel_calls, "cancel_stream should fire once buffer crosses MAX_STREAM_BYTES")
-    assert(fake.chunks_yielded <= 5, "no further chunks should be processed after MAX_STREAM_BYTES (got #{fake.chunks_yielded})")
+    big_chunk = "x" * 1024
+    fake = FakeCancellableSession.new(chunks: ["```ruby\n", big_chunk, big_chunk, big_chunk, big_chunk, "more\n", "```\n"])
+    engine_with(fake).stream([{ role: "user", content: "hi" }]) { |_| }
+    assert_equal(1, fake.cancel_calls)
+    assert_equal(5, fake.chunks_yielded)
   end
 
   def test_engine_passes_through_non_overflow_error
@@ -211,15 +206,11 @@ class TestAppleFmEngineRecovery < Test::Unit::TestCase
       def stream_response(to:, stop_at: nil)
         raise AppleFoundationModel::GenerationError, "some other error"
       end
+
       def close; end
-      def cancel_stream; end
     end.new
-    engine = RbFoundationModelMacAgent::AppleFmEngine.new(
-      system_prompt: "system",
-      session_builder: ->(_) { fake },
-    )
-    assert_raise(AppleFoundationModel::GenerationError) do
-      engine.stream([{ role: "user", content: "hi" }]) { |_| }
+    assert_raise_message("some other error") do
+      engine_with(fake).stream([{ role: "user", content: "hi" }]) { |_| }
     end
   end
 end

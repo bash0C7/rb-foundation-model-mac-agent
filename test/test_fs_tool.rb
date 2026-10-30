@@ -74,6 +74,21 @@ class TestFsTool < Test::Unit::TestCase
     end
   end
 
+  def test_write_through_symlink_escape_blocked
+    other_dir = Dir.mktmpdir
+    begin
+      target = File.join(other_dir, "victim.txt")
+      File.write(target, "original")
+      File.symlink(target, File.join(@root, "link.txt"))
+      assert_raise_message(/path outside fs_root/) do
+        RbFoundationModelMacAgent::FsTool.write(path: "link.txt", content: "pwned", fs_root: @root)
+      end
+      assert_equal("original", File.read(target))
+    ensure
+      FileUtils.rm_rf(other_dir)
+    end
+  end
+
   def test_dotdot_escape_blocked
     nested = File.join(@root, "nested")
     FileUtils.mkdir_p(nested)

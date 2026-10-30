@@ -15,15 +15,8 @@ module RbFoundationModelMacAgent
     PROJECT_DIR_NAME = ".rb-foundation-model-mac-agent"
     GEM_AGENTS_DIR = File.expand_path("../../agents", __dir__)
 
-    # Module-level slots for mutable state referenced from the on_submit
-    # block. Baslash wraps on_submit in Ractor.shareable_proc which rejects
-    # closures over mutable locals; constant lookup of this module is
-    # Ractor-shareable, and the handler itself runs on the main thread
-    # (see Baslash::SlashDispatcher), so dereferencing non-shareable values
-    # via the constant is safe at call time.
     class << self
-      attr_accessor :current_session, :current_registry,
-                    :current_agent_def, :current_project_agents
+      attr_accessor :current_session
     end
 
     module_function
@@ -31,21 +24,19 @@ module RbFoundationModelMacAgent
     def run(argv)
       agent_name = argv.first || DEFAULT_AGENT
       project_dir = ensure_project_dir(Dir.pwd)
-      mcp_config  = File.join(project_dir, "mcp.json")
       project_agents = File.join(project_dir, "agents")
 
       agent_def = AgentDef.load(agent_name,
                                 gem_agents_dir: GEM_AGENTS_DIR,
                                 project_agents_dir: project_agents)
-      registry = McpRegistry.new(config_path: mcp_config)
+      registry = McpRegistry.new(config_path: File.join(project_dir, "mcp.json"))
       session  = Session.new(agent_def: agent_def, mcp_registry: registry)
+      CLI.current_session = session
 
-      CLI.current_session        = session
-      CLI.current_registry       = registry
-      CLI.current_agent_def      = agent_def
-      CLI.current_project_agents = project_agents
-
-      at_exit { session.close; registry.close_all }
+      at_exit do
+        session.close
+        registry.close_all
+      end
 
       start_shell(agent_def: agent_def, registry: registry, session: session,
                   project_agents: project_agents)
@@ -69,7 +60,7 @@ module RbFoundationModelMacAgent
           h.subtitle "agent=#{agent_def[:name]} · engine=#{agent_def[:engine]} · #{Dir.pwd}"
         end
 
-        shell.shortcuts_hint "/agents · /tools · /mcp list · /reset · /quit"
+        shell.shortcuts_hint "/agents · /tools · /mcp list · /reset · /exit"
 
         shell.on_submit do |args, ctx|
           line = args.first.to_s
@@ -79,7 +70,7 @@ module RbFoundationModelMacAgent
             RbFoundationModelMacAgent::CLI.current_session.turn(line, display: ctx.display)
           rescue StandardError => e
             ctx.display.dialog("error: #{e.class}: #{e.message}", style: :warn)
-            ctx.logger.error(e.full_message) if ctx.respond_to?(:logger)
+            ctx.logger.error(e.full_message)
           ensure
             ctx.state[:phase] = :idle
           end
@@ -91,8 +82,7 @@ module RbFoundationModelMacAgent
         end
 
         shell.slash(:tools, description: "list tools for the current agent") do |_args, ctx|
-          lines = []
-          agent_def[:allowed_builtin].each { |n| lines << "- #{n} (built-in)" }
+          lines = agent_def[:allowed_builtin].map { |n| "- #{n} (built-in)" }
           agent_def[:allowed_mcp].each do |srv|
             registry.tools(srv).each { |t| lines << "- #{srv}.#{t[:name]} — #{t[:description]}" }
           end
@@ -100,18 +90,18 @@ module RbFoundationModelMacAgent
         end
 
         shell.slash(:mcp, description: "manage MCP servers — list | add NAME SOURCE | remove NAME") do |args, ctx|
-          sub = args.shift
+          sub = args.first
           case sub
           when "list", nil
             rows = registry.list.map { |r| "- #{r[:name]} (#{r[:kind]}, #{r[:status]}, #{r[:tool_count]} tools) #{r[:source]}" }
             ctx.display.dialog(rows.empty? ? "(no servers)" : rows.join("\n"), style: :result)
           when "add"
-            name, source = args
+            name, source = args[1..]
             raise "usage: /mcp add NAME SOURCE" unless name && source
             registry.add(name, source)
             ctx.display.dialog("added #{name}", style: :result)
           when "remove"
-            name = args.first
+            name = args[1]
             raise "usage: /mcp remove NAME" unless name
             registry.remove(name)
             ctx.display.dialog("removed #{name}", style: :result)

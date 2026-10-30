@@ -4,38 +4,35 @@ module RbFoundationModelMacAgent
   module ContextCompactor
     HEAD_LINES = 10
     TAIL_LINES = 5
+    KEEP_FULL = 3
 
     module_function
 
-    # messages: [{role:, content:}, ...]
-    # system_prompt_size: rough chars/bytes of the system prompt (already in Apple FM)
-    # target_tokens: budget for the compacted output
     def compact(messages, system_prompt_size:, target_tokens:)
       return "" if messages.empty?
 
       rendered = messages.map { |m| render_full(m) }
-      budget = target_tokens - (system_prompt_size / 3)
-      budget = 100 if budget < 100  # always leave room
-
-      # Stage 1: full render fits within budget
+      budget = [target_tokens - (system_prompt_size / 3), 100].max
       return rendered.join("\n") if total_tokens(rendered) <= budget
 
-      # Stage 2: keep last 3 entries (≈ recent pair user→assistant→tool_result) full,
-      # squeeze older ones
-      keep_full_from = [messages.length - 3, 0].max
+      keep_full_from = [messages.length - KEEP_FULL, 0].max
       rendered = messages.each_with_index.map do |m, i|
         i >= keep_full_from ? render_full(m) : render_squeezed(m)
       end
       return rendered.join("\n") if total_tokens(rendered) <= budget
 
-      # Stage 3: drop oldest until under budget
-      while rendered.length > 1 && total_tokens(rendered) > budget
-        rendered.shift
-      end
-      rendered.join("\n")
+      rendered.shift while rendered.length > 1 && total_tokens(rendered) > budget
+      return rendered.first if total_tokens(rendered) <= budget
+      truncate_bytes(rendered.first, budget * 3)
     end
 
-    # --- helpers ---
+    def truncate_bytes(text, max_bytes)
+      marker = "\n...[truncated]...\n"
+      keep = max_bytes - marker.bytesize
+      head = text.byteslice(0, keep * 2 / 3).scrub("")
+      tail = text.byteslice(-(keep / 3), keep / 3).scrub("")
+      "#{head}#{marker}#{tail}"
+    end
 
     def render_full(msg)
       "#{msg[:role]}: #{msg[:content]}"
@@ -43,7 +40,6 @@ module RbFoundationModelMacAgent
 
     def render_squeezed(msg)
       content = msg[:content]
-      # tool_call fence → short repr
       if (m = content.match(/```tool_call\n(.*?)\n```/m))
         body = m[1]
         name = body[/name:\s*(\S+)/, 1]
@@ -51,10 +47,9 @@ module RbFoundationModelMacAgent
         args_str = args.map { |k, v| "#{k}=#{v}" }.join(", ")
         return "#{msg[:role]}: [tool_call: #{name}(#{args_str})]"
       end
-      # tool_result fence → head/tail
       if (m = content.match(/```tool_result\n(.*?)\n```/m))
         body = m[1]
-        if (cm = body.match(/content:\s*\|\n(.*)/m))
+        if (cm = body.match(/content:\s*\|[-+]?\n(.*)/m))
           lines = cm[1].split("\n")
           if lines.length > HEAD_LINES + TAIL_LINES
             head = lines.first(HEAD_LINES).join("\n")
@@ -66,7 +61,6 @@ module RbFoundationModelMacAgent
         end
         return "#{msg[:role]}: [tool_result: #{body.lines.first(2).join.chomp}]"
       end
-      # Long plain content → truncate
       if content.bytesize > 800
         return "#{msg[:role]}: #{content[0, 400]}...[truncated]...#{content[-200..]}"
       end

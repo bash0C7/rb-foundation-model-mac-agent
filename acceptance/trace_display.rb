@@ -1,8 +1,5 @@
 # frozen_string_literal: true
 
-# Display duck-type implementer that writes the Session's loop activity
-# to an IO (typically $stdout) with labeled iter headers. Used by the L1
-# acceptance harness to surface autonomous loop progress for human review.
 class TraceDisplay
   def initialize(io)
     @io = io

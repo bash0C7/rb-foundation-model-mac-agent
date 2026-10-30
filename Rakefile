@@ -9,6 +9,12 @@ Rake::TestTask.new(:test) do |t|
   t.warning = false
 end
 
+desc "Validate the RBS signatures"
+task :rbs do
+  sh "rbs", "-I", "sig", "validate"
+end
+
+task test: :rbs
 task default: :test
 
 module AcceptancePaths
@@ -19,9 +25,7 @@ end
 namespace :acceptance do
   def apple_fm_available?
     require "foundation_model_mac"
-    s = AppleFoundationModel::Session.new(instructions: "")
-    s.close if s.respond_to?(:close)
-    true
+    AppleFoundationModel::Session.new(instructions: "").close
   rescue StandardError, LoadError => e
     warn "[acceptance] Apple FM probe failed: #{e.class}: #{e.message}"
     false
@@ -76,7 +80,7 @@ namespace :acceptance do
 
     sh <<~CMD
       tmux new-session -d -s #{session_name} -c '#{AcceptancePaths::WORK}' \\
-        "RBENV_VERSION=4.0.3 BUNDLE_GEMFILE='#{AcceptancePaths::REPO}/Gemfile' exec bundle exec '#{AcceptancePaths::REPO}/exe/rb-foundation-model-mac-agent' yamabiko 2>&1 | tee '#{AcceptancePaths::WORK}/l2.log'"
+        "BUNDLE_GEMFILE='#{AcceptancePaths::REPO}/Gemfile' exec bundle exec '#{AcceptancePaths::REPO}/exe/rb-foundation-model-mac-agent' yamabiko 2>&1 | tee '#{AcceptancePaths::WORK}/l2.log'"
     CMD
     sleep 2
 
@@ -119,7 +123,7 @@ namespace :acceptance do
 
     sh <<~CMD
       tmux new-session -d -s #{session_name} -c '#{AcceptancePaths::WORK}' \\
-        "RBENV_VERSION=4.0.3 BUNDLE_GEMFILE='#{AcceptancePaths::REPO}/Gemfile' exec bundle exec '#{AcceptancePaths::REPO}/exe/rb-foundation-model-mac-agent' ruby-coder 2>&1 | tee '#{AcceptancePaths::WORK}/l3.log'"
+        "BUNDLE_GEMFILE='#{AcceptancePaths::REPO}/Gemfile' exec bundle exec '#{AcceptancePaths::REPO}/exe/rb-foundation-model-mac-agent' ruby-coder 2>&1 | tee '#{AcceptancePaths::WORK}/l3.log'"
     CMD
     sleep 2
 
@@ -129,7 +133,6 @@ namespace :acceptance do
     puts <<~MSG
 
       ━━━ L3 E2E Acceptance — driver done ━━━
-      Apple FM inference is slow (~10-30s per iter, max_iters=8).
       Attach:  tmux attach -t #{session_name}
       Log:     tail -f #{AcceptancePaths::WORK}/l3.log
       Cleanup: rake acceptance:l3_kill
